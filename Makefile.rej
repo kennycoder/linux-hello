@@ -1,0 +1,37 @@
+--- home/nikolai/Development/linux-hello/Makefile
++++ home/nikolai/Development/linux-hello/Makefile
+@@ -1,6 +1,4 @@
+ PREFIX ?= /usr
+-
+-
+ DESTDIR ?=
+ 
+ CARGO ?= cargo
+@@ -7,4 +7,14 @@
+ 
++# When running via sudo, inherit the invoking user's CARGO_HOME if root doesn't have one
++ifeq ($(CARGO_HOME),)
++  ifneq ($(SUDO_USER),)
++    SUDO_USER_HOME := $(shell getent passwd $(SUDO_USER) | cut -d: -f6)
++    ifneq ($(wildcard $(SUDO_USER_HOME)/.cargo),)
++      export CARGO_HOME := $(SUDO_USER_HOME)/.cargo
++    endif
++  endif
++endif
++
+ all: build
+ 
+ build:
+@@ -12,7 +12,11 @@
+ test:
+ 	$(CARGO) test $(CARGO_FLAGS)
+ 
+-install: build
++install:
++	@if [ ! -f target/release/linux-hello ] || [ ! -f target/release/linux-hellod ] || [ ! -f target/release/libpam_linux_hello.so ]; then \
++		echo "Release binaries not found. Building with $(CARGO)..."; \
++		$(CARGO) build $(CARGO_FLAGS); \
++	fi
+ 	# Install binaries
+ 	install -d $(DESTDIR)$(PREFIX)/bin
+ 	install -m 755 target/release/linux-hello $(DESTDIR)$(PREFIX)/bin/linux-hello

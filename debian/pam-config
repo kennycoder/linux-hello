@@ -1,0 +1,6 @@
+Name: Linux-Hello face authentication
+Default: yes
+Priority: 260
+Auth-Type: Primary
+Auth:
+	[success=end default=ignore] pam_linux_hello.so

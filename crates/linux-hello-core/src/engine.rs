@@ -1,0 +1,316 @@
+use std::ffi::CString;
+use std::path::Path;
+use thiserror::Error;
+
+use crate::ffi::*;
+
+#[derive(Error, Debug)]
+pub enum EngineError {
+    #[error("Failed to load face detection or recognition model: {0}")]
+    ModelLoad(String),
+    #[error("Internal face processing error occurred")]
+    ProcessingError,
+    #[error("Invalid path: {0}")]
+    InvalidPath(String),
+}
+
+#[derive(Debug, Clone)]
+pub struct Face {
+    pub bbox: (f32, f32, f32, f32), // (x, y, width, height)
+    pub score: f32,
+    pub landmarks: [(f32, f32); 5],
+    pub embedding: Vec<f32>,
+}
+
+impl Face {
+    /// Returns approximate (yaw, pitch) pose ratios:
+    /// yaw: ~0.50 center, >0.57 turned left (user's left), <0.43 turned right (user's right)
+    /// pitch: ~0.50 center, <0.43 tilted up, >0.57 tilted down
+    pub fn estimated_pose_ratios(&self) -> (f32, f32) {
+        let right_eye = self.landmarks[0];
+        let left_eye = self.landmarks[1];
+        let nose = self.landmarks[2];
+        let right_mouth = self.landmarks[3];
+        let left_mouth = self.landmarks[4];
+
+        let min_eye_x = right_eye.0.min(left_eye.0);
+        let max_eye_x = right_eye.0.max(left_eye.0);
+        let eye_dist = max_eye_x - min_eye_x;
+        let yaw = if eye_dist > 1.0 {
+            (nose.0 - min_eye_x) / eye_dist
+        } else {
+            0.5
+        };
+
+        let eye_mid_y = (right_eye.1 + left_eye.1) / 2.0;
+        let mouth_mid_y = (right_mouth.1 + left_mouth.1) / 2.0;
+        let vert_dist = (mouth_mid_y - eye_mid_y).abs();
+        let pitch = if vert_dist > 1.0 {
+            (nose.1 - eye_mid_y) / vert_dist
+        } else {
+            0.5
+        };
+
+        (yaw, pitch)
+    }
+
+    /// Verifies that detected face satisfies basic human anatomical geometry and high confidence,
+    /// preventing non-face textures (pillows, fabric folds, reflections) from being treated as faces.
+    pub fn is_valid_human_face(&self) -> bool {
+        // 1. Detection confidence threshold: must be >= 0.70
+        if self.score < 0.70 {
+            return false;
+        }
+
+        // 2. Minimum bounding box: face must be at least 45x45 pixels
+        if self.bbox.2 < 45.0 || self.bbox.3 < 45.0 {
+            return false;
+        }
+
+        // 3. Aspect ratio: width/height between 0.45 and 1.60
+        let ar = self.bbox.2 / self.bbox.3;
+        if !(0.45..=1.60).contains(&ar) {
+            return false;
+        }
+
+        // 4. Landmark geometry:
+        let right_eye = self.landmarks[0];
+        let left_eye = self.landmarks[1];
+        let nose = self.landmarks[2];
+        let right_mouth = self.landmarks[3];
+        let left_mouth = self.landmarks[4];
+
+        // Eye distance must be at least 18 pixels
+        let eye_dist = (left_eye.0 - right_eye.0).hypot(left_eye.1 - right_eye.1);
+        if eye_dist < 18.0 {
+            return false;
+        }
+
+        // Mouth corners must be below eyes
+        let eye_y = (right_eye.1 + left_eye.1) / 2.0;
+        let mouth_y = (right_mouth.1 + left_mouth.1) / 2.0;
+        if mouth_y <= eye_y + 8.0 {
+            return false;
+        }
+
+        // Nose tip must be roughly between eyes and mouth in vertical axis
+        if nose.1 < eye_y - 5.0 || nose.1 > mouth_y + 15.0 {
+            return false;
+        }
+
+        true
+    }
+
+    /// Checks whether the face angle matches the requested target pose.
+    /// Returns (matched, guidance_instruction).
+    pub fn matches_target_pose(&self, target_pose: &str) -> (bool, &'static str) {
+        let (yaw, pitch) = self.estimated_pose_ratios();
+        match target_pose {
+            "center" => {
+                if yaw < 0.43 {
+                    (false, "Turn slightly to your LEFT (towards center)")
+                } else if yaw > 0.57 {
+                    (false, "Turn slightly to your RIGHT (towards center)")
+                } else if pitch < 0.49 {
+                    (false, "Tilt head slightly DOWN (towards center)")
+                } else if pitch > 0.61 {
+                    (false, "Tilt head slightly UP (towards center)")
+                } else {
+                    (true, "Holding Center")
+                }
+            }
+            "look_left" => {
+                if yaw >= 0.57 {
+                    (true, "Turned Left")
+                } else {
+                    (false, "Turn more to your LEFT")
+                }
+            }
+            "look_right" => {
+                if yaw <= 0.43 {
+                    (true, "Turned Right")
+                } else {
+                    (false, "Turn more to your RIGHT")
+                }
+            }
+            "look_up" => {
+                if pitch <= 0.51 {
+                    (true, "Tilted Up")
+                } else {
+                    (false, "Tilt head higher UP")
+                }
+            }
+            "look_down" => {
+                if pitch >= 0.59 {
+                    (true, "Tilted Down")
+                } else {
+                    (false, "Tilt head further DOWN")
+                }
+            }
+            _ => (true, "Valid Pose"),
+        }
+    }
+}
+
+pub struct FaceEngine {
+    ptr: *mut FaceEngineOpaque,
+}
+
+unsafe impl Send for FaceEngine {}
+unsafe impl Sync for FaceEngine {}
+
+impl FaceEngine {
+    pub fn new(det_path: &Path, rec_path: &Path, width: u32, height: u32) -> Result<Self, EngineError> {
+        let det_cstr = CString::new(det_path.to_string_lossy().as_bytes())
+            .map_err(|_| EngineError::InvalidPath(det_path.to_string_lossy().into()))?;
+        let rec_cstr = CString::new(rec_path.to_string_lossy().as_bytes())
+            .map_err(|_| EngineError::InvalidPath(rec_path.to_string_lossy().into()))?;
+
+        let ptr = unsafe {
+            face_engine_new(
+                det_cstr.as_ptr(),
+                rec_cstr.as_ptr(),
+                width as i32,
+                height as i32,
+            )
+        };
+
+        if ptr.is_null() {
+            return Err(EngineError::ModelLoad(format!(
+                "Detector: {:?}, Recognizer: {:?}",
+                det_path, rec_path
+            )));
+        }
+
+        Ok(FaceEngine { ptr })
+    }
+
+    pub fn process_frame(&self, gray_data: &[u8], width: u32, height: u32) -> Result<Vec<Face>, EngineError> {
+        const MAX_FACES: usize = 10;
+        let mut raw_faces = [RawFace::default(); MAX_FACES];
+
+        let count = unsafe {
+            face_engine_detect_and_embed(
+                self.ptr,
+                gray_data.as_ptr(),
+                width as i32,
+                height as i32,
+                raw_faces.as_mut_ptr(),
+                MAX_FACES as i32,
+            )
+        };
+
+        if count < 0 {
+            return Err(EngineError::ProcessingError);
+        }
+
+        let mut faces = Vec::with_capacity(count as usize);
+        for i in 0..count as usize {
+            let rf = &raw_faces[i];
+            let mut landmarks = [(0.0, 0.0); 5];
+            for l in 0..5 {
+                landmarks[l] = (rf.landmarks[l * 2], rf.landmarks[l * 2 + 1]);
+            }
+
+            faces.push(Face {
+                bbox: (rf.x, rf.y, rf.width, rf.height),
+                score: rf.score,
+                landmarks,
+                embedding: rf.embedding.to_vec(),
+            });
+        }
+
+        Ok(faces)
+    }
+
+    pub fn cosine_similarity(feat1: &[f32], feat2: &[f32]) -> f32 {
+        if feat1.len() != feat2.len() || feat1.is_empty() {
+            return 0.0;
+        }
+        unsafe {
+            face_engine_cosine_distance(feat1.as_ptr(), feat2.as_ptr(), feat1.len() as i32)
+        }
+    }
+}
+
+impl Drop for FaceEngine {
+    fn drop(&mut self) {
+        if !self.ptr.is_null() {
+            unsafe { face_engine_free(self.ptr) };
+            self.ptr = std::ptr::null_mut();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sample_valid_face() -> Face {
+        Face {
+            bbox: (100.0, 100.0, 120.0, 140.0),
+            score: 0.92,
+            landmarks: [
+                (130.0, 140.0), // right eye
+                (190.0, 140.0), // left eye
+                (160.0, 178.0), // nose (pitch ~0.54)
+                (140.0, 210.0), // right mouth
+                (180.0, 210.0), // left mouth
+            ],
+            embedding: vec![0.1; 128],
+        }
+    }
+
+    #[test]
+    fn test_valid_human_face_check() {
+        let face = sample_valid_face();
+        assert!(face.is_valid_human_face());
+
+        // Low confidence (e.g. pillow / false positive) rejected
+        let mut weak_face = face.clone();
+        weak_face.score = 0.55;
+        assert!(!weak_face.is_valid_human_face());
+
+        // Tiny box rejected
+        let mut tiny_face = face.clone();
+        tiny_face.bbox = (100.0, 100.0, 30.0, 30.0);
+        assert!(!tiny_face.is_valid_human_face());
+
+        // Inverted landmarks (mouth above eyes) rejected
+        let mut inverted_face = face.clone();
+        inverted_face.landmarks[3] = (140.0, 120.0);
+        inverted_face.landmarks[4] = (180.0, 120.0);
+        assert!(!inverted_face.is_valid_human_face());
+    }
+
+    #[test]
+    fn test_pose_matching() {
+        let center_face = sample_valid_face();
+        assert!(center_face.matches_target_pose("center").0);
+
+        // Turn head left: nose moves towards left eye (higher X in unmirrored image)
+        let mut left_face = sample_valid_face();
+        left_face.landmarks[2] = (175.0, 175.0); // nose close to left eye (190.0) -> yaw = 45/60 = 0.75
+        assert!(left_face.matches_target_pose("look_left").0);
+        assert!(!left_face.matches_target_pose("center").0);
+
+        // Turn head right: nose moves towards right eye (lower X in unmirrored image)
+        let mut right_face = sample_valid_face();
+        right_face.landmarks[2] = (145.0, 175.0); // nose close to right eye (130.0) -> yaw = 15/60 = 0.25
+        assert!(right_face.matches_target_pose("look_right").0);
+        assert!(!right_face.matches_target_pose("center").0);
+
+        // Tilt up: nose moves closer to eye line
+        let mut up_face = sample_valid_face();
+        up_face.landmarks[2] = (160.0, 155.0); // eye_y=140, mouth_y=210, dist=70. nose_y=155 -> pitch=15/70=0.21
+        assert!(up_face.matches_target_pose("look_up").0);
+        assert!(!up_face.matches_target_pose("center").0);
+
+        // Tilt down: nose moves closer to mouth line
+        let mut down_face = sample_valid_face();
+        down_face.landmarks[2] = (160.0, 195.0); // nose_y=195 -> pitch=55/70=0.78
+        assert!(down_face.matches_target_pose("look_down").0);
+        assert!(!down_face.matches_target_pose("center").0);
+    }
+}
+

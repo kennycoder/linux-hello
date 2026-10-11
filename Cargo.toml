@@ -1,0 +1,9 @@
+[workspace]
+members = [
+    "crates/linux-hello-camera",
+    "crates/linux-hello-core",
+    "crates/linux-hellod",
+    "crates/pam_linux_hello",
+    "crates/linux-hello-cli",
+]
+resolver = "2"

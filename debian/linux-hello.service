@@ -1,0 +1,15 @@
+[Unit]
+Description=Linux-Hello Biometric Authentication Daemon
+Documentation=https://github.com/linux-hello/linux-hello
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/linux-hellod --socket /run/linux-hello.sock --models-dir /usr/share/linux-hello/models --storage-dir /var/lib/linux-hello/models
+Restart=on-failure
+RestartSec=2
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

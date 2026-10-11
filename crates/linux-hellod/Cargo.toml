@@ -1,0 +1,14 @@
+[package]
+name = "linux-hellod"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+linux-hello-camera = { path = "../linux-hello-camera" }
+linux-hello-core = { path = "../linux-hello-core" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+log = "0.4"
+env_logger = "0.11"
+clap = { version = "4.5", features = ["derive"] }
+libc = "0.2"
