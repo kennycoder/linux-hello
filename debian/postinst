@@ -1,0 +1,17 @@
+#!/bin/sh
+set -e
+
+# Reload systemd and enable/start daemon
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+    systemctl enable linux-hello.service || true
+    systemctl restart linux-hello.service || true
+fi
+
+# Activate PAM configuration
+if command -v pam-auth-update >/dev/null 2>&1; then
+    pam-auth-update --package || true
+fi
+
+exit 0
+

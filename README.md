@@ -1,3 +1,14 @@
+<p align="center">
+  <img src="assets/linux-hello-logo-cropped.svg" alt="Linux-Hello Logo" width="420">
+</p>
+
+<p align="center">
+  <a href="https://github.com/kennycoder/linux-hello/actions/workflows/ci.yml"><img src="https://github.com/kennycoder/linux-hello/actions/workflows/ci.yml/badge.svg" alt="CI Build & Tests"></a>
+  <a href="https://github.com/kennycoder/linux-hello/actions/workflows/release.yml"><img src="https://github.com/kennycoder/linux-hello/actions/workflows/release.yml/badge.svg" alt="Release Package"></a>
+  <a href="https://github.com/kennycoder/linux-hello/releases"><img src="https://img.shields.io/github/v/release/kennycoder/linux-hello?include_prereleases&color=blue" alt="Latest Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache_2.0-blue.svg" alt="License: Apache-2.0"></a>
+</p>
+
 # Linux-Hello
 
 A high-performance, secure biometric facial authentication system for Linux, designed as a fast, native equivalent to **Windows Hello**.
@@ -217,29 +228,39 @@ Authenticate directly against camera hardware and local profile storage, complet
 
 ## System Installation & Debian PAM Setup
 
-### 1. Install System-Wide
-```bash
-sudo make install
-```
-This installs:
-- `/usr/bin/linux-hello` (CLI)
-- `/usr/bin/linux-hellod` (Daemon)
-- `/lib/x86_64-linux-gnu/security/pam_linux_hello.so` (PAM module)
-- `/usr/share/linux-hello/models/` (ONNX weights)
-- `/etc/systemd/system/linux-hello.service`
-- `/usr/share/pam-configs/linux-hello`
+### Option A: Install from Debian Package (.deb) — Recommended
 
-### 2. Start the Daemon
+Download the latest `.deb` package from [GitHub Releases](https://github.com/kennycoder/linux-hello/releases) or build it locally with `make deb`:
+
 ```bash
+# Install package (apt automatically resolves all runtime dependencies)
+sudo apt install ./linux-hello_*_amd64.deb
+```
+
+The Debian package automatically:
+- Installs `linux-hello`, `linux-hellod`, and `pam_linux_hello.so`.
+- Downloads and places YuNet and SFace ONNX models in `/usr/share/linux-hello/models`.
+- Enables and starts `linux-hello.service` in systemd.
+- Registers the PAM authentication profile with Debian's `pam-auth-update`.
+
+### Option B: Build and Install from Source
+
+```bash
+# 1. Build and install to /usr
+make
+sudo make install
+
+# Or build your own Debian package from source:
+make deb
+sudo apt install ./target/linux-hello_*_amd64.deb
+
+# 2. Start the daemon service
 sudo systemctl daemon-reload
 sudo systemctl enable --now linux-hello.service
-```
 
-### 3. Enable PAM Authentication
-```bash
+# 3. Enable PAM authentication
 sudo linux-hello enable
-# Or run:
-sudo pam-auth-update --package
+# Or: sudo pam-auth-update --package
 ```
 
 To disable PAM authentication at any time:
