@@ -1,8 +1,11 @@
 #include <opencv2/opencv.hpp>
 #include <opencv2/objdetect.hpp>
+#include <opencv2/core/version.hpp>
 #include <vector>
+#include <string>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 #include <algorithm>
 
 extern "C" {
@@ -24,21 +27,76 @@ struct FaceEngine {
     int input_h;
 };
 
+static bool test_detector_works(cv::Ptr<cv::FaceDetectorYN>& detector, int width, int height) {
+    if (!detector) return false;
+    try {
+        cv::Mat probe(height, width, CV_8UC3, cv::Scalar(128, 128, 128));
+        cv::Mat faces;
+        detector->setInputSize(cv::Size(width, height));
+        detector->detect(probe, faces);
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
+static cv::Ptr<cv::FaceDetectorYN> create_working_detector(const char* det_model_path, int width, int height) {
+    std::string primary_path = det_model_path ? det_model_path : "";
+    std::vector<std::string> candidates;
+
+    std::string dir;
+    size_t last_slash = primary_path.find_last_of("/\\");
+    if (last_slash != std::string::npos) {
+        dir = primary_path.substr(0, last_slash + 1);
+    }
+
+#if CV_VERSION_MAJOR == 4 && CV_VERSION_MINOR < 8
+    // OpenCV < 4.8 (e.g. 4.6.0 on Ubuntu 22.04/24.04 and Debian 12) requires 2022mar model format ("loc", "conf", "iou")
+    candidates.push_back(dir + "face_detection_yunet_2022mar.onnx");
+    candidates.push_back(primary_path);
+#else
+    // OpenCV 4.8+ supports 2023mar model format ("cls_8", "bbox_8", etc.)
+    candidates.push_back(primary_path);
+    candidates.push_back(dir + "face_detection_yunet_2022mar.onnx");
+#endif
+
+    for (const auto& path : candidates) {
+        if (path.empty()) continue;
+        FILE* f = fopen(path.c_str(), "rb");
+        if (!f) continue;
+        fclose(f);
+
+        try {
+            cv::Ptr<cv::FaceDetectorYN> det = cv::FaceDetectorYN::create(
+                path, "", cv::Size(width, height), 0.7f, 0.3f, 5000
+            );
+            if (det && test_detector_works(det, width, height)) {
+                return det;
+            }
+        } catch (...) {
+            continue;
+        }
+    }
+    return nullptr;
+}
+
 FaceEngine* face_engine_new(const char* det_model_path, const char* rec_model_path, int width, int height) {
     try {
         FaceEngine* engine = new FaceEngine();
         engine->input_w = width;
         engine->input_h = height;
-        engine->detector = cv::FaceDetectorYN::create(
-            det_model_path, "", cv::Size(width, height), 0.7f, 0.3f, 5000
-        );
+        engine->detector = create_working_detector(det_model_path, width, height);
         engine->recognizer = cv::FaceRecognizerSF::create(rec_model_path, "");
         if (!engine->detector || !engine->recognizer) {
             delete engine;
             return nullptr;
         }
         return engine;
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[face_engine_new] Exception: %s\n", e.what());
+        return nullptr;
     } catch (...) {
+        fprintf(stderr, "[face_engine_new] Unknown exception\n");
         return nullptr;
     }
 }
@@ -111,7 +169,14 @@ int face_engine_detect_and_embed(
             }
         }
         return count;
+    } catch (const cv::Exception& e) {
+        fprintf(stderr, "[face_engine_detect_and_embed] OpenCV exception: %s\n", e.what());
+        return -1;
+    } catch (const std::exception& e) {
+        fprintf(stderr, "[face_engine_detect_and_embed] std exception: %s\n", e.what());
+        return -1;
     } catch (...) {
+        fprintf(stderr, "[face_engine_detect_and_embed] unknown exception\n");
         return -1;
     }
 }

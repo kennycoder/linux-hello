@@ -1,0 +1,11 @@
+#!/bin/sh
+set -e
+
+# Stop and disable systemd service before removal
+if [ -d /run/systemd/system ]; then
+    systemctl stop linux-hello.service || true
+    systemctl disable linux-hello.service || true
+fi
+
+exit 0
+

@@ -1,0 +1,14 @@
+#!/bin/sh
+set -e
+
+# Deactivate PAM configuration if package was removed
+if command -v pam-auth-update >/dev/null 2>&1; then
+    pam-auth-update --package || true
+fi
+
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+
+exit 0
+

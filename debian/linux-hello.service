@@ -1,6 +1,6 @@
 [Unit]
 Description=Linux-Hello Biometric Authentication Daemon
-Documentation=https://github.com/linux-hello/linux-hello
+Documentation=https://github.com/kennycoder/linux-hello
 After=network.target
 
 [Service]
