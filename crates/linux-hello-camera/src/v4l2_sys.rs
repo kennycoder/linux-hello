@@ -11,6 +11,14 @@ pub const VIDIOC_QBUF: c_ulong = 0xc058560f;
 pub const VIDIOC_DQBUF: c_ulong = 0xc0585611;
 pub const VIDIOC_STREAMON: c_ulong = 0x40045612;
 pub const VIDIOC_STREAMOFF: c_ulong = 0x40045613;
+pub const VIDIOC_G_CTRL: c_ulong = 0xc008561b;
+pub const VIDIOC_S_CTRL: c_ulong = 0xc008561c;
+pub const VIDIOC_G_EXT_CTRLS: c_ulong = 0xc0205647;
+pub const VIDIOC_S_EXT_CTRLS: c_ulong = 0xc0205648;
+
+pub const V4L2_CID_REGION_OF_INTEREST_RECT: u32 = 0x00981ae1;
+pub const V4L2_CID_REGION_OF_INTEREST_AUTO: u32 = 0x00981ae2;
+pub const V4L2_CID_REGION_OF_INTEREST_AUTO_EXPOSURE: i32 = 1;
 
 pub const V4L2_BUF_TYPE_VIDEO_CAPTURE: u32 = 1;
 pub const V4L2_MEMORY_MMAP: u32 = 1;
@@ -20,6 +28,42 @@ pub const V4L2_FIELD_ANY: u32 = 0;
 pub const V4L2_PIX_FMT_GREY: u32 = u32::from_le_bytes(*b"GREY");
 pub const V4L2_PIX_FMT_YUYV: u32 = u32::from_le_bytes(*b"YUYV");
 pub const V4L2_PIX_FMT_MJPEG: u32 = u32::from_le_bytes(*b"MJPG");
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct v4l2_control {
+    pub id: u32,
+    pub value: i32,
+}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct v4l2_rect {
+    pub left: i32,
+    pub top: i32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[repr(C, packed)]
+#[derive(Copy, Clone)]
+pub struct v4l2_ext_control {
+    pub id: u32,
+    pub size: u32,
+    pub reserved2: [u32; 1],
+    pub ptr: *mut c_void,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone)]
+pub struct v4l2_ext_controls {
+    pub which: u32,
+    pub count: u32,
+    pub error_idx: u32,
+    pub request_fd: i32,
+    pub reserved: [u32; 1],
+    pub controls: *mut v4l2_ext_control,
+}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]

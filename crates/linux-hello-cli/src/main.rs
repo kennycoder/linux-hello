@@ -199,17 +199,43 @@ fn resolve_camera_device(device: Option<&Path>) -> Result<PathBuf, Box<dyn std::
 }
 
 fn describe_pose(yaw: f32, pitch: f32) -> &'static str {
-    if yaw > 0.57 {
+    if yaw > 0.62 {
         "Turned Left"
-    } else if yaw < 0.43 {
+    } else if yaw < 0.38 {
         "Turned Right"
-    } else if pitch < 0.49 {
+    } else if pitch < 0.40 {
         "Tilted Up"
-    } else if pitch > 0.61 {
+    } else if pitch > 0.65 {
         "Tilted Down"
     } else {
         "Facing Center"
     }
+}
+
+fn average_embeddings(embeddings: &[Vec<f32>]) -> Vec<f32> {
+    if embeddings.is_empty() {
+        return Vec::new();
+    }
+    let dim = embeddings[0].len();
+    let mut avg = vec![0.0f32; dim];
+    for emb in embeddings {
+        for (i, &val) in emb.iter().enumerate() {
+            avg[i] += val;
+        }
+    }
+    let n = embeddings.len() as f32;
+    let mut norm_sq = 0.0f32;
+    for val in &mut avg {
+        *val /= n;
+        norm_sq += *val * *val;
+    }
+    let norm = norm_sq.sqrt();
+    if norm > 1e-6 {
+        for val in &mut avg {
+            *val /= norm;
+        }
+    }
+    avg
 }
 
 fn load_image_grayscale(path: &Path) -> Result<(Vec<u8>, u32, u32), Box<dyn std::error::Error>> {
@@ -370,7 +396,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut stream = CameraStream::open(&cam_path, 640, 400)?;
             let det_model = models_dir.join("face_detection_yunet.onnx");
             let rec_model = models_dir.join("face_recognition_sface.onnx");
-            let engine = FaceEngine::new(&det_model, &rec_model, 640, 400)?;
+            let engine = FaceEngine::new(&det_model, &rec_model, stream.width, stream.height)?;
 
             if let Some(custom_label) = label {
                 // Single-shot enrollment with custom label
@@ -380,6 +406,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut found = false;
                 let mut frames_scanned = 0usize;
                 let mut stable_frames = 0usize;
+                let mut missed_frames = 0usize;
+                let mut collected_embeddings: Vec<Vec<f32>> = Vec::new();
 
                 while start.elapsed().as_secs() < 12 {
                     let frame = match stream.capture_frame(400) {
@@ -395,20 +423,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if let Ok(faces) = engine.process_frame(&frame.gray_data, frame.width, frame.height) {
                         let valid_face = faces.iter().find(|f| f.is_valid_human_face()).cloned();
                         if let Some(face) = valid_face {
+                            missed_frames = 0;
                             stable_frames += 1;
+                            collected_embeddings.push(face.embedding.clone());
                             let meter = match stable_frames {
                                 1 => "[●○○]",
                                 2 => "[●●○]",
                                 _ => "[●●●]",
                             };
                             print!(
-                                "\r  {} Face detected! Hold steady... (confidence: {:.2})",
+                                "\r  {} Face detected! Hold steady... (confidence: {:.2})          ",
                                 meter, face.score
                             );
                             let _ = std::io::stdout().flush();
 
                             if stable_frames >= 3 {
-                                profile.add_embedding(face.embedding.clone(), custom_label.clone());
+                                let avg_emb = average_embeddings(&collected_embeddings);
+                                profile.add_embedding(avg_emb, custom_label.clone());
                                 storage.save_profile(&profile)?;
                                 println!(
                                     "\n\n[SUCCESS] Enrolled face! Score: {:.2}, Total models for '{}': {}",
@@ -419,17 +450,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 break;
                             }
                         } else {
-                            stable_frames = 0;
-                            let msg = if faces.iter().any(|f| !f.eyes_visible) {
-                                "(eyes covered/occluded - keep eyes open and uncovered)"
-                            } else {
-                                "(looking for human face)"
-                            };
-                            print!(
-                                "\r  Scanning camera frames... [frame {}] {}     ",
-                                frames_scanned, msg
-                            );
-                            let _ = std::io::stdout().flush();
+                            missed_frames += 1;
+                            if stable_frames == 0 || missed_frames >= 3 {
+                                stable_frames = 0;
+                                collected_embeddings.clear();
+                                let msg = if faces.iter().any(|f| !f.eyes_visible) {
+                                    "(eyes covered/occluded - keep eyes open and uncovered)"
+                                } else {
+                                    "(looking for human face)"
+                                };
+                                print!(
+                                    "\r  Scanning camera frames... [frame {}] {}     ",
+                                    frames_scanned, msg
+                                );
+                                let _ = std::io::stdout().flush();
+                            }
                         }
                     }
                 }
@@ -483,6 +518,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("=======================================================\n");
 
                 let mut captured_count = 0;
+                let mut center_baseline: Option<(f32, f32)> = None;
 
                 for (idx, pose) in poses.iter().enumerate() {
                     println!("-------------------------------------------------------");
@@ -495,6 +531,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let mut step_done = false;
                     let mut frames_scanned = 0usize;
                     let mut stable_frames = 0usize;
+                    let mut missed_frames = 0usize;
+                    let mut pose_missed_frames = 0usize;
+                    let mut collected_embeddings: Vec<Vec<f32>> = Vec::new();
+                    let mut pose_yaws: Vec<f32> = Vec::new();
+                    let mut pose_pitches: Vec<f32> = Vec::new();
 
                     while start.elapsed().as_secs() < 15 {
                         let frame = match stream.capture_frame(400) {
@@ -510,24 +551,35 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if let Ok(faces) = engine.process_frame(&frame.gray_data, frame.width, frame.height) {
                             let valid_face = faces.iter().find(|f| f.is_valid_human_face()).cloned();
                             if let Some(face) = valid_face {
-                                let (matched, guidance) = face.matches_target_pose(pose.id);
+                                missed_frames = 0;
+                                let (matched, guidance) = face.matches_target_pose_with_baseline(pose.id, center_baseline);
                                 let (yaw, pitch) = face.estimated_pose_ratios();
 
                                 if matched {
+                                    pose_missed_frames = 0;
                                     stable_frames += 1;
+                                    collected_embeddings.push(face.embedding.clone());
+                                    pose_yaws.push(yaw);
+                                    pose_pitches.push(pitch);
                                     let meter = match stable_frames {
                                         1 => "[●○○]",
                                         2 => "[●●○]",
                                         _ => "[●●●]",
                                     };
                                     print!(
-                                        "\r  {} ✓ In target pose! Hold still... [yaw: {:.2}, pitch: {:.2}]    ",
+                                        "\r  {} ✓ In target pose! Hold still... [yaw: {:.2}, pitch: {:.2}]          ",
                                         meter, yaw, pitch
                                     );
                                     let _ = std::io::stdout().flush();
 
                                     if stable_frames >= 3 {
-                                        profile.upsert_embedding(face.embedding.clone(), pose.id.to_string());
+                                        let avg_emb = average_embeddings(&collected_embeddings);
+                                        profile.upsert_embedding(avg_emb, pose.id.to_string());
+                                        if pose.id == "center" && !pose_yaws.is_empty() {
+                                            let cy = pose_yaws.iter().sum::<f32>() / (pose_yaws.len() as f32);
+                                            let cp = pose_pitches.iter().sum::<f32>() / (pose_pitches.len() as f32);
+                                            center_baseline = Some((cy, cp));
+                                        }
                                         println!(
                                             "\n  ✓ [CAPTURED] {} angle verified! (confidence: {:.2}, yaw: {:.2}, pitch: {:.2})",
                                             pose.title, face.score, yaw, pitch
@@ -538,25 +590,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         break;
                                     }
                                 } else {
+                                    pose_missed_frames += 1;
+                                    if stable_frames == 0 || pose_missed_frames >= 2 {
+                                        stable_frames = 0;
+                                        collected_embeddings.clear();
+                                        pose_yaws.clear();
+                                        pose_pitches.clear();
+                                        print!(
+                                            "\r  [○○○] ➔ {} [yaw: {:.2}, pitch: {:.2}]              ",
+                                            guidance, yaw, pitch
+                                        );
+                                        let _ = std::io::stdout().flush();
+                                    }
+                                }
+                            } else {
+                                missed_frames += 1;
+                                if stable_frames == 0 || missed_frames >= 3 {
                                     stable_frames = 0;
+                                    collected_embeddings.clear();
+                                    pose_yaws.clear();
+                                    pose_pitches.clear();
+                                    let msg = if faces.iter().any(|f| !f.eyes_visible) {
+                                        "Eyes covered or occluded! Keep eyes open and uncovered"
+                                    } else {
+                                        "Waiting for valid face... (keep head in camera view)"
+                                    };
                                     print!(
-                                        "\r  [○○○] ➔ {} [yaw: {:.2}, pitch: {:.2}]              ",
-                                        guidance, yaw, pitch
+                                        "\r  [○○○] ➔ {} [frame {}]          ",
+                                        msg, frames_scanned
                                     );
                                     let _ = std::io::stdout().flush();
                                 }
-                            } else {
-                                stable_frames = 0;
-                                let msg = if faces.iter().any(|f| !f.eyes_visible) {
-                                    "Eyes covered or occluded! Keep eyes open and uncovered"
-                                } else {
-                                    "Waiting for valid face... (keep head in camera view)"
-                                };
-                                print!(
-                                    "\r  [○○○] ➔ {} [frame {}]     ",
-                                    msg, frames_scanned
-                                );
-                                let _ = std::io::stdout().flush();
                             }
                         }
                     }
@@ -668,7 +732,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut stream = CameraStream::open(&cam_path, 640, 400)?;
             let det_model = models_dir.join("face_detection_yunet.onnx");
             let rec_model = models_dir.join("face_recognition_sface.onnx");
-            let engine = FaceEngine::new(&det_model, &rec_model, 640, 400)?;
+            let engine = FaceEngine::new(&det_model, &rec_model, stream.width, stream.height)?;
 
             println!("Looking for face in camera {:?} (profile has {} enrolled templates)...", cam_path, profile.enrolled_embeddings.len());
             let mut matched = false;
@@ -845,7 +909,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("=======================================================\n");
 
             let mut stream = CameraStream::open(&cam_path, 640, 400)?;
-            let engine = FaceEngine::new(&det_model, &rec_model, 640, 400)?;
+            let engine = FaceEngine::new(&det_model, &rec_model, stream.width, stream.height)?;
 
             let start_time = Instant::now();
             let mut frame_count = 0usize;

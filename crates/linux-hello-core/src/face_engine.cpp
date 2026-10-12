@@ -68,7 +68,7 @@ static cv::Ptr<cv::FaceDetectorYN> create_working_detector(const char* det_model
 
         try {
             cv::Ptr<cv::FaceDetectorYN> det = cv::FaceDetectorYN::create(
-                path, "", cv::Size(width, height), 0.7f, 0.3f, 5000
+                path, "", cv::Size(width, height), 0.6f, 0.3f, 5000
             );
             if (det && test_detector_works(det, width, height)) {
                 return det;
@@ -134,6 +134,26 @@ int face_engine_detect_and_embed(
         cv::Mat faces;
         engine->detector->detect(bgr, faces);
 
+        // If no face or low confidence (common at larger distance where IR illumination falls off as 1/r^2
+        // or when backlit/overexposed), retry detection with CLAHE local contrast enhancement.
+        bool used_clahe = false;
+        cv::Mat bgr_clahe;
+        float best_raw_score = (!faces.empty() && faces.rows > 0) ? faces.at<float>(0, 14) : 0.0f;
+        if (faces.empty() || faces.rows == 0 || best_raw_score < 0.78f) {
+            cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE(2.5, cv::Size(8, 8));
+            cv::Mat gray_clahe;
+            clahe->apply(gray, gray_clahe);
+            cv::cvtColor(gray_clahe, bgr_clahe, cv::COLOR_GRAY2BGR);
+
+            cv::Mat faces_clahe;
+            engine->detector->detect(bgr_clahe, faces_clahe);
+            float best_clahe_score = (!faces_clahe.empty() && faces_clahe.rows > 0) ? faces_clahe.at<float>(0, 14) : 0.0f;
+            if (best_clahe_score > best_raw_score + 0.03f) {
+                faces = faces_clahe;
+                used_clahe = true;
+            }
+        }
+
         if (faces.empty() || faces.rows == 0) {
             return 0;
         }
@@ -154,7 +174,22 @@ int face_engine_detect_and_embed(
             // Align and crop to canonical 112x112 face
             cv::Mat aligned_face;
             cv::Mat face_row = faces.row(i);
-            engine->recognizer->alignCrop(bgr, face_row, aligned_face);
+            engine->recognizer->alignCrop(used_clahe ? bgr_clahe : bgr, face_row, aligned_face);
+
+            // If the aligned face crop has very low contrast or is dim/blown out at distance,
+            // normalize local contrast on the crop before feature extraction.
+            if (!used_clahe && !aligned_face.empty()) {
+                cv::Scalar mean_s, std_s;
+                cv::meanStdDev(aligned_face, mean_s, std_s);
+                if (mean_s[0] < 48.0 || std_s[0] < 22.0 || mean_s[0] > 205.0) {
+                    cv::Mat crop_gray;
+                    cv::cvtColor(aligned_face, crop_gray, cv::COLOR_BGR2GRAY);
+                    cv::Ptr<cv::CLAHE> crop_clahe = cv::createCLAHE(2.0, cv::Size(4, 4));
+                    cv::Mat crop_eq;
+                    crop_clahe->apply(crop_gray, crop_eq);
+                    cv::cvtColor(crop_eq, aligned_face, cv::COLOR_GRAY2BGR);
+                }
+            }
 
             // Extract 128-D feature vector
             cv::Mat feat;
