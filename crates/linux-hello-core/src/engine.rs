@@ -60,13 +60,13 @@ impl Face {
     /// Verifies that detected face satisfies basic human anatomical geometry and high confidence,
     /// preventing non-face textures (pillows, fabric folds, reflections) from being treated as faces.
     pub fn is_valid_human_face(&self) -> bool {
-        // 1. Detection confidence threshold: must be >= 0.70
-        if self.score < 0.70 {
+        // 1. Detection confidence threshold: must be >= 0.65
+        if self.score < 0.65 {
             return false;
         }
 
-        // 2. Minimum bounding box: face must be at least 45x45 pixels
-        if self.bbox.2 < 45.0 || self.bbox.3 < 45.0 {
+        // 2. Minimum bounding box: face must be at least 36x36 pixels (supports larger sitting distance)
+        if self.bbox.2 < 36.0 || self.bbox.3 < 36.0 {
             return false;
         }
 
@@ -83,16 +83,16 @@ impl Face {
         let right_mouth = self.landmarks[3];
         let left_mouth = self.landmarks[4];
 
-        // Eye distance must be at least 18 pixels
+        // Eye distance must be at least 12 pixels (supports larger distance and yaw turns)
         let eye_dist = (left_eye.0 - right_eye.0).hypot(left_eye.1 - right_eye.1);
-        if eye_dist < 18.0 {
+        if eye_dist < 12.0 {
             return false;
         }
 
         // Mouth corners must be below eyes
         let eye_y = (right_eye.1 + left_eye.1) / 2.0;
         let mouth_y = (right_mouth.1 + left_mouth.1) / 2.0;
-        if mouth_y <= eye_y + 8.0 {
+        if mouth_y <= eye_y + 6.0 {
             return false;
         }
 
@@ -113,47 +113,61 @@ impl Face {
     /// Checks whether the face angle matches the requested target pose.
     /// Returns (matched, guidance_instruction).
     pub fn matches_target_pose(&self, target_pose: &str) -> (bool, &'static str) {
+        self.matches_target_pose_with_baseline(target_pose, None)
+    }
+
+    /// Checks whether the face angle matches the requested target pose, optionally
+    /// accounting for the user's natural neutral "center" pose baseline `(center_yaw, center_pitch)`.
+    pub fn matches_target_pose_with_baseline(
+        &self,
+        target_pose: &str,
+        center_baseline: Option<(f32, f32)>,
+    ) -> (bool, &'static str) {
         let (yaw, pitch) = self.estimated_pose_ratios();
         match target_pose {
             "center" => {
-                if yaw < 0.43 {
+                if yaw < 0.38 {
                     (false, "Turn slightly to your LEFT (towards center)")
-                } else if yaw > 0.57 {
+                } else if yaw > 0.62 {
                     (false, "Turn slightly to your RIGHT (towards center)")
-                } else if pitch < 0.49 {
+                } else if pitch < 0.40 {
                     (false, "Tilt head slightly DOWN (towards center)")
-                } else if pitch > 0.61 {
+                } else if pitch > 0.65 {
                     (false, "Tilt head slightly UP (towards center)")
                 } else {
                     (true, "Holding Center")
                 }
             }
             "look_left" => {
-                if yaw >= 0.57 {
+                let rel_match = center_baseline.map_or(false, |(cy, _)| yaw >= cy + 0.04);
+                if yaw >= 0.54 || rel_match {
                     (true, "Turned Left")
                 } else {
-                    (false, "Turn more to your LEFT")
+                    (false, "Turn slightly more to your LEFT")
                 }
             }
             "look_right" => {
-                if yaw <= 0.43 {
+                let rel_match = center_baseline.map_or(false, |(cy, _)| yaw <= cy - 0.04);
+                if yaw <= 0.46 || rel_match {
                     (true, "Turned Right")
                 } else {
-                    (false, "Turn more to your RIGHT")
+                    (false, "Turn slightly more to your RIGHT")
                 }
             }
             "look_up" => {
-                if pitch <= 0.51 {
+                let rel_match = center_baseline.map_or(false, |(_, cp)| pitch <= cp - 0.03);
+                if pitch <= 0.53 || rel_match {
                     (true, "Tilted Up")
                 } else {
-                    (false, "Tilt head higher UP")
+                    (false, "Tilt head slightly higher UP")
                 }
             }
             "look_down" => {
-                if pitch >= 0.59 {
+                let rel_match = center_baseline.map_or(false, |(_, cp)| pitch >= cp + 0.03);
+                if pitch >= 0.55 || rel_match {
                     (true, "Tilted Down")
                 } else {
-                    (false, "Tilt head further DOWN")
+                    (false, "Tilt head slightly further DOWN")
                 }
             }
             _ => (true, "Valid Pose"),
@@ -225,9 +239,26 @@ impl FaceEngine {
             let (r_std, r_range) = Self::compute_eye_metrics(gray_data, width, height, landmarks[0].0, landmarks[0].1, eye_dist);
             let (l_std, l_range) = Self::compute_eye_metrics(gray_data, width, height, landmarks[1].0, landmarks[1].1, eye_dist);
 
-            // Open/visible eyes in IR display pupil/iris/sclera contrast.
-            // When eyes are covered by fingers or hands, the region is flat skin with low variance/range.
-            let eyes_visible = r_std >= 6.0 && l_std >= 6.0 && ((r_std + l_std) / 2.0) >= 7.5 && r_range >= 18.0 && l_range >= 18.0;
+            // Open/visible eyes in IR exhibit a dark iris/pupil core (basin) surrounded
+            // horizontally by brighter sclera/canthus and vertically by a brighter lower eyelid,
+            // along with strong horizontal scanline variance across the aperture.
+            // When the head turns 15-25+ degrees left/right, the far eye is foreshortened and
+            // partially shadowed by the nose bridge while the near eye remains clearly visible.
+            let eye_dx = (landmarks[1].0 - landmarks[0].0).max(1.0);
+            let yaw_ratio = ((landmarks[2].0 - landmarks[0].0) / eye_dx).clamp(0.0, 1.0);
+            let yaw_dev = (yaw_ratio - 0.50).abs();
+            let turn_relax = (1.0 - (yaw_dev - 0.05).max(0.0) * 1.8).clamp(0.55, 1.0);
+
+            let dist_scale = (eye_dist / 42.0).clamp(0.75, 1.0);
+            let min_std = r_std.min(l_std);
+            let max_std = r_std.max(l_std);
+            let avg_std = (r_std + l_std) / 2.0;
+            let min_range = r_range.min(l_range);
+
+            let eyes_visible = min_std >= 8.8 * dist_scale * turn_relax
+                && max_std >= 11.2 * dist_scale
+                && avg_std >= 11.2 * dist_scale * turn_relax.sqrt()
+                && min_range >= 18.0 * dist_scale * turn_relax;
 
             faces.push(Face {
                 bbox: (rf.x, rf.y, rf.width, rf.height),
@@ -243,9 +274,13 @@ impl FaceEngine {
         Ok(faces)
     }
 
-    /// Computes intensity standard deviation and dynamic range (max - min) in a small window
-    /// centered on an eye landmark. Uncovered eyes have high variance due to pupil/sclera/eyelids,
-    /// whereas fingers/hands covering eyes exhibit flat skin texture.
+    /// Computes an illumination-normalized, gaze/turn-invariant eye-openness contrast score
+    /// and dynamic range around an eye landmark. Open eyes in IR have a dark iris/pupil core
+    /// surrounded horizontally by brighter sclera/skin and below by a brighter lower eyelid,
+    /// plus high within-row horizontal variance. Sampling across [-0.14*ed .. +0.14*ed] allows
+    /// the iris to shift towards the eye corners during 15-25° left/right head turns without
+    /// losing contrast, while per-column vertical dip comparison cancels out horizontal shading
+    /// on closed eyelids.
     pub fn compute_eye_metrics(
         gray_data: &[u8],
         width: u32,
@@ -258,49 +293,122 @@ impl FaceEngine {
             return (0.0, 0.0);
         }
 
-        let rx = (0.16 * eye_dist).round().max(3.0) as i32;
-        let ry = (0.12 * eye_dist).round().max(3.0) as i32;
+        let w = width as i32;
+        let h = height as i32;
         let cx = eye_x.round() as i32;
         let cy = eye_y.round() as i32;
-
-        let x_min = (cx - rx).max(0).min(width as i32 - 1);
-        let x_max = (cx + rx).max(0).min(width as i32 - 1);
-        let y_min = (cy - ry).max(0).min(height as i32 - 1);
-        let y_max = (cy + ry).max(0).min(height as i32 - 1);
-
-        let mut count = 0usize;
-        let mut sum = 0.0f64;
-        let mut sum_sq = 0.0f64;
-        let mut min_val = 255u8;
-        let mut max_val = 0u8;
-
-        for y in y_min..=y_max {
-            let row_offset = (y as usize) * (width as usize);
-            for x in x_min..=x_max {
-                let pixel = gray_data[row_offset + (x as usize)];
-                if pixel < min_val {
-                    min_val = pixel;
-                }
-                if pixel > max_val {
-                    max_val = pixel;
-                }
-                let pf = pixel as f64;
-                sum += pf;
-                sum_sq += pf * pf;
-                count += 1;
-            }
-        }
-
-        if count < 9 {
+        if cx < 0 || cx >= w || cy < 0 || cy >= h {
             return (0.0, 0.0);
         }
 
-        let mean = sum / (count as f64);
-        let variance = (sum_sq / (count as f64)) - (mean * mean);
-        let std_dev = if variance > 0.0 { variance.sqrt() as f32 } else { 0.0 };
-        let range = (max_val - min_val) as f32;
+        let ed = eye_dist.max(20.0);
+        let rx = (0.20 * ed).round().max(4.0) as i32;
 
-        (std_dev, range)
+        // 1. Eye aperture band: dy in [-0.07*ed .. +0.03*ed], dx in [-0.14*ed .. +0.14*ed].
+        // Wider horizontal span allows the dark iris to sit near the inner/outer eye corner
+        // during 15-25° head turns, while same-column vertical comparison against the lower
+        // eyelid band [+0.08*ed .. +0.16*ed] cancels out horizontal nose-bridge shading.
+        let irx = (0.14 * ed).round().max(3.0) as i32;
+        let iry_top = (0.07 * ed).round().max(2.0) as i32;
+        let iry_bot = (0.03 * ed).round().max(1.0) as i32;
+        let l_top = (0.08 * ed).round().max(3.0) as i32;
+        let l_bot = (0.16 * ed).round().max(6.0) as i32;
+
+        let mut iris_vals = Vec::with_capacity(((2 * irx + 1) * (iry_top + iry_bot + 1)) as usize);
+        let mut lower_vals = Vec::with_capacity(((2 * irx + 1) * (l_bot - l_top + 1)) as usize);
+        let mut col_ldips = Vec::with_capacity((2 * irx + 1) as usize);
+
+        for dx in -irx..=irx {
+            let x = (cx + dx).clamp(0, w - 1) as usize;
+            let mut c_iris = Vec::with_capacity((iry_top + iry_bot + 1) as usize);
+            for dy in -iry_top..=iry_bot {
+                let y = (cy + dy).clamp(0, h - 1) as usize;
+                let p = gray_data[y * (width as usize) + x];
+                c_iris.push(p);
+                iris_vals.push(p);
+            }
+            let mut c_low = Vec::with_capacity((l_bot - l_top + 1) as usize);
+            for dy in l_top..=l_bot {
+                let y = (cy + dy).clamp(0, h - 1) as usize;
+                let p = gray_data[y * (width as usize) + x];
+                c_low.push(p);
+                lower_vals.push(p);
+            }
+            c_iris.sort_unstable();
+            c_low.sort_unstable();
+            let ci_p25 = c_iris[c_iris.len() / 4] as f32;
+            let cl_p75 = c_low[(3 * c_low.len()) / 4] as f32;
+            col_ldips.push(cl_p75 - ci_p25);
+        }
+
+        if iris_vals.is_empty() || col_ldips.is_empty() {
+            return (0.0, 0.0);
+        }
+        iris_vals.sort_unstable();
+        lower_vals.sort_unstable();
+        col_ldips.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+        let iris_p20 = iris_vals[iris_vals.len() / 5] as f32;
+        let lower_ref = lower_vals[(3 * lower_vals.len()) / 4] as f32;
+        let ldip = col_ldips[(7 * col_ldips.len()) / 10].max(0.0);
+
+        // 2. Horizontal aperture statistics across [-rx .. +rx]
+        let mut aperture_vals = Vec::with_capacity(((2 * rx + 1) * (iry_top + iry_bot + 1)) as usize);
+        let mut row_std_sum = 0.0f32;
+        let mut row_count = 0usize;
+        let mut min_val = 255u8;
+        let mut max_val = 0u8;
+        let row_width = (2 * rx + 1) as f64;
+
+        for dy in -iry_top..=iry_bot {
+            let y = (cy + dy).clamp(0, h - 1) as usize;
+            let row_off = y * (width as usize);
+            let mut sum = 0.0f64;
+            let mut sum_sq = 0.0f64;
+            for dx in -rx..=rx {
+                let x = (cx + dx).clamp(0, w - 1) as usize;
+                let p = gray_data[row_off + x];
+                aperture_vals.push(p);
+                min_val = min_val.min(p);
+                max_val = max_val.max(p);
+                let pf = p as f64;
+                sum += pf;
+                sum_sq += pf * pf;
+            }
+            let mean = sum / row_width;
+            let var = (sum_sq / row_width) - (mean * mean);
+            row_std_sum += if var > 0.0 { var.sqrt() as f32 } else { 0.0 };
+            row_count += 1;
+        }
+        for &p in &lower_vals {
+            min_val = min_val.min(p);
+            max_val = max_val.max(p);
+        }
+
+        aperture_vals.sort_unstable();
+        let side_p80 = aperture_vals[(4 * aperture_vals.len()) / 5] as f32;
+        let sdip = (side_p80 - iris_p20).max(0.0);
+
+        let mean_row_std = if row_count > 0 {
+            row_std_sum / (row_count as f32)
+        } else {
+            0.0
+        };
+        let raw_range = (max_val.saturating_sub(min_val)) as f32;
+
+        // 3. Illumination normalization: boost dim/under-exposed frames (ref_skin < 130), never penalize bright frames
+        let ref_skin = lower_ref.max(side_p80).max(iris_p20).max(35.0);
+        let norm_scale = (130.0 / ref_skin).clamp(1.0, 2.2);
+
+        let basin_dip = (ldip * sdip).sqrt();
+        let eff_std = (mean_row_std * 0.45 * basin_dip).sqrt() * norm_scale;
+        let eff_range = if basin_dip >= 12.0 {
+            raw_range
+        } else {
+            basin_dip * 2.0 * norm_scale
+        };
+
+        (eff_std, eff_range)
     }
 
     pub fn cosine_similarity(feat1: &[f32], feat2: &[f32]) -> f32 {
@@ -389,6 +497,23 @@ mod tests {
         let (eye_std, eye_range) = FaceEngine::compute_eye_metrics(&eye_img, 100, 100, 50.0, 50.0, 40.0);
         assert!(eye_std > 15.0);
         assert_eq!(eye_range, 150.0);
+
+        // Simulated 20° head turn where iris shifts towards the corner of the eye landmark (±5px)
+        let (turn_l_std, _) = FaceEngine::compute_eye_metrics(&eye_img, 100, 100, 45.0, 50.0, 40.0);
+        let (turn_r_std, _) = FaceEngine::compute_eye_metrics(&eye_img, 100, 100, 55.0, 50.0, 40.0);
+        assert!(turn_l_std > 15.0);
+        assert!(turn_r_std > 15.0);
+
+        // Closed eyelid: strong vertical shading (bright upper lid -> darker lash line) but no central dark iris basin
+        let mut closed_img = vec![150u8; 100 * 100];
+        for y in 42..=58 {
+            let row_val = (185 - (y as i32 - 42) * 5).clamp(100, 200) as u8;
+            for x in 35..=65 {
+                closed_img[y * 100 + x] = row_val;
+            }
+        }
+        let (closed_std, _) = FaceEngine::compute_eye_metrics(&closed_img, 100, 100, 50.0, 50.0, 40.0);
+        assert!(closed_std < 5.0, "Closed eyelid vertical gradient should have low openness score, got {}", closed_std);
     }
 
     #[test]
