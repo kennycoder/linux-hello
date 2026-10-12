@@ -43,8 +43,7 @@ install:
 
 	# Install ONNX models
 	install -d $(DESTDIR)$(PREFIX)/share/linux-hello/models
-	install -m 644 models/face_detection_yunet.onnx $(DESTDIR)$(PREFIX)/share/linux-hello/models/
-	install -m 644 models/face_recognition_sface.onnx $(DESTDIR)$(PREFIX)/share/linux-hello/models/
+	install -m 644 models/*.onnx $(DESTDIR)$(PREFIX)/share/linux-hello/models/
 
 	# Storage directory
 	install -d -m 755 $(DESTDIR)/var/lib/linux-hello/models
