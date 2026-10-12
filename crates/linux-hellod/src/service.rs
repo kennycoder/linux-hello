@@ -146,7 +146,7 @@ impl HelloService {
             success: false,
             score: best_score.max(0.0),
             message: format!(
-                "Authentication timed out (best confidence score: {:.3}, threshold: {:.3})",
+                "Authentication timed out (best similarity score: {:.3}, threshold: {:.3})",
                 best_score.max(0.0),
                 self.threshold
             ),

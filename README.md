@@ -1,6 +1,6 @@
 # Linux-Hello
 
-A high-performance, secure biometric facial authentication system for Linux (with first-class Debian support), designed as a fast, native equivalent to **Windows Hello**.
+A high-performance, secure biometric facial authentication system for Linux, designed as a fast, native equivalent to **Windows Hello**.
 
 Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrared (IR) cameras, ONNX face detection & recognition models, and native Debian PAM integration.
 
@@ -8,7 +8,7 @@ Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrare
 
 ## Features
 
-- **Dedicated IR Camera Support & Safeguards**:
+- **Dedicated IR Camera Support**:
   - Direct Linux V4L2 `mmap` streaming on `/dev/video2` (or auto-detected IR device).
   - Automatically filters illuminated infrared strobe frames from ambient/dark frames.
   - **Hardware Safeguard**: Strictly verifies dedicated IR camera capabilities (via `GREY`, `Y16`, `Z16` formats or IR device card metadata). Never defaults to a standard RGB webcam (`/dev/video0`) to prevent insecure fallback.
@@ -18,7 +18,7 @@ Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrare
 - **Anti-Spoofing & Anatomical Landmark Validation**:
   - Eliminates false positives from non-face textures, fabric folds, cushions, or arbitrary objects.
   - Validates human anatomical geometry: inter-ocular eye distance ($\ge 18\text{px}$), mouth below eye line ($\ge 8\text{px}$), nose tip vertically positioned between eyes and mouth, bounding box bounds ($\ge 45\times 45\text{px}$), and human facial aspect ratios ($0.45 \le AR \le 1.60$).
-  - Strict cosine similarity matching threshold of **0.50** (real faces score $0.65 - 0.90$, non-matching faces and noise score $< 0.35$).
+  - Strict cosine similarity matching threshold of **0.65** (real, unoccluded faces score $0.70 - 0.90+$, occlusions, covered eyes/features, non-matching faces and noise score $< 0.60$).
 - **Interactive Multi-Angle Enrollment**:
   - Guided 5-pose registration state machine: **Center**, **Turn Left** (15-20°), **Turn Right** (15-20°), **Tilt Up** (10-15°), and **Tilt Down** (10-15°).
   - Live horizontal (`yaw`) and vertical (`pitch`) pose estimation with real-time on-screen guidance (e.g. `➔ Turn more to your LEFT`).
@@ -28,7 +28,7 @@ Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrare
   - `pam_linux_hello.so`: Ultra-lightweight (517 KB) PAM module with zero heavy runtime dependencies in PAM process space.
   - Fail-safe fallback: If camera or daemon is offline, PAM immediately and seamlessly falls back to password authentication without hanging.
 - **Debian PAM Integration**: Uses Debian's standard `pam-auth-update` profile mechanism (`/usr/share/pam-configs/linux-hello`), avoiding fragile manual edits to `/etc/pam.d/common-auth`.
-- **Administrative CLI**: Complete management tool for enrollment, testing, camera diagnostics, offline image analysis, and service control.
+- **CLI Goodies**: Complete management tool for enrollment, testing, camera diagnostics, offline image analysis, and service control.
 
 ---
 

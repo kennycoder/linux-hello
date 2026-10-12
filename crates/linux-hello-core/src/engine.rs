@@ -20,6 +20,9 @@ pub struct Face {
     pub score: f32,
     pub landmarks: [(f32, f32); 5],
     pub embedding: Vec<f32>,
+    pub eye_contrast: (f32, f32), // (right_eye_std, left_eye_std)
+    pub eye_range: (f32, f32),    // (right_eye_range, left_eye_range)
+    pub eyes_visible: bool,
 }
 
 impl Face {
@@ -95,6 +98,12 @@ impl Face {
 
         // Nose tip must be roughly between eyes and mouth in vertical axis
         if nose.1 < eye_y - 5.0 || nose.1 > mouth_y + 15.0 {
+            return false;
+        }
+
+        // 5. Eye visibility & unoccluded check:
+        // Rejects faces with eyes covered by fingers, hands, masks, or sleeping/closed eyes
+        if !self.eyes_visible {
             return false;
         }
 
@@ -212,15 +221,86 @@ impl FaceEngine {
                 landmarks[l] = (rf.landmarks[l * 2], rf.landmarks[l * 2 + 1]);
             }
 
+            let eye_dist = (landmarks[1].0 - landmarks[0].0).hypot(landmarks[1].1 - landmarks[0].1);
+            let (r_std, r_range) = Self::compute_eye_metrics(gray_data, width, height, landmarks[0].0, landmarks[0].1, eye_dist);
+            let (l_std, l_range) = Self::compute_eye_metrics(gray_data, width, height, landmarks[1].0, landmarks[1].1, eye_dist);
+
+            // Open/visible eyes in IR display pupil/iris/sclera contrast.
+            // When eyes are covered by fingers or hands, the region is flat skin with low variance/range.
+            let eyes_visible = r_std >= 6.0 && l_std >= 6.0 && ((r_std + l_std) / 2.0) >= 7.5 && r_range >= 18.0 && l_range >= 18.0;
+
             faces.push(Face {
                 bbox: (rf.x, rf.y, rf.width, rf.height),
                 score: rf.score,
                 landmarks,
                 embedding: rf.embedding.to_vec(),
+                eye_contrast: (r_std, l_std),
+                eye_range: (r_range, l_range),
+                eyes_visible,
             });
         }
 
         Ok(faces)
+    }
+
+    /// Computes intensity standard deviation and dynamic range (max - min) in a small window
+    /// centered on an eye landmark. Uncovered eyes have high variance due to pupil/sclera/eyelids,
+    /// whereas fingers/hands covering eyes exhibit flat skin texture.
+    pub fn compute_eye_metrics(
+        gray_data: &[u8],
+        width: u32,
+        height: u32,
+        eye_x: f32,
+        eye_y: f32,
+        eye_dist: f32,
+    ) -> (f32, f32) {
+        if width == 0 || height == 0 || gray_data.len() < (width * height) as usize {
+            return (0.0, 0.0);
+        }
+
+        let rx = (0.16 * eye_dist).round().max(3.0) as i32;
+        let ry = (0.12 * eye_dist).round().max(3.0) as i32;
+        let cx = eye_x.round() as i32;
+        let cy = eye_y.round() as i32;
+
+        let x_min = (cx - rx).max(0).min(width as i32 - 1);
+        let x_max = (cx + rx).max(0).min(width as i32 - 1);
+        let y_min = (cy - ry).max(0).min(height as i32 - 1);
+        let y_max = (cy + ry).max(0).min(height as i32 - 1);
+
+        let mut count = 0usize;
+        let mut sum = 0.0f64;
+        let mut sum_sq = 0.0f64;
+        let mut min_val = 255u8;
+        let mut max_val = 0u8;
+
+        for y in y_min..=y_max {
+            let row_offset = (y as usize) * (width as usize);
+            for x in x_min..=x_max {
+                let pixel = gray_data[row_offset + (x as usize)];
+                if pixel < min_val {
+                    min_val = pixel;
+                }
+                if pixel > max_val {
+                    max_val = pixel;
+                }
+                let pf = pixel as f64;
+                sum += pf;
+                sum_sq += pf * pf;
+                count += 1;
+            }
+        }
+
+        if count < 9 {
+            return (0.0, 0.0);
+        }
+
+        let mean = sum / (count as f64);
+        let variance = (sum_sq / (count as f64)) - (mean * mean);
+        let std_dev = if variance > 0.0 { variance.sqrt() as f32 } else { 0.0 };
+        let range = (max_val - min_val) as f32;
+
+        (std_dev, range)
     }
 
     pub fn cosine_similarity(feat1: &[f32], feat2: &[f32]) -> f32 {
@@ -258,6 +338,9 @@ mod tests {
                 (180.0, 210.0), // left mouth
             ],
             embedding: vec![0.1; 128],
+            eye_contrast: (18.0, 19.0),
+            eye_range: (60.0, 65.0),
+            eyes_visible: true,
         }
     }
 
@@ -281,6 +364,31 @@ mod tests {
         inverted_face.landmarks[3] = (140.0, 120.0);
         inverted_face.landmarks[4] = (180.0, 120.0);
         assert!(!inverted_face.is_valid_human_face());
+
+        // Eyes occluded (covered by fingers, hands, or sleeping) rejected
+        let mut occluded_face = face.clone();
+        occluded_face.eyes_visible = false;
+        assert!(!occluded_face.is_valid_human_face());
+    }
+
+    #[test]
+    fn test_eye_metrics_computation() {
+        // Flat image (e.g. fingers covering eyes)
+        let flat_img = vec![120u8; 100 * 100];
+        let (flat_std, flat_range) = FaceEngine::compute_eye_metrics(&flat_img, 100, 100, 50.0, 50.0, 40.0);
+        assert_eq!(flat_std, 0.0);
+        assert_eq!(flat_range, 0.0);
+
+        // Pattern with high contrast (simulated pupil / sclera)
+        let mut eye_img = vec![180u8; 100 * 100]; // bright sclera
+        for y in 45..=55 {
+            for x in 45..=55 {
+                eye_img[y * 100 + x] = 30; // dark pupil/iris
+            }
+        }
+        let (eye_std, eye_range) = FaceEngine::compute_eye_metrics(&eye_img, 100, 100, 50.0, 50.0, 40.0);
+        assert!(eye_std > 15.0);
+        assert_eq!(eye_range, 150.0);
     }
 
     #[test]

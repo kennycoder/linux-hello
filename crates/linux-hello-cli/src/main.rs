@@ -393,7 +393,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
 
                     if let Ok(faces) = engine.process_frame(&frame.gray_data, frame.width, frame.height) {
-                        let valid_face = faces.into_iter().find(|f| f.is_valid_human_face());
+                        let valid_face = faces.iter().find(|f| f.is_valid_human_face()).cloned();
                         if let Some(face) = valid_face {
                             stable_frames += 1;
                             let meter = match stable_frames {
@@ -420,9 +420,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             }
                         } else {
                             stable_frames = 0;
+                            let msg = if faces.iter().any(|f| !f.eyes_visible) {
+                                "(eyes covered/occluded - keep eyes open and uncovered)"
+                            } else {
+                                "(looking for human face)"
+                            };
                             print!(
-                                "\r  Scanning camera frames... [frame {}] (looking for human face)",
-                                frames_scanned
+                                "\r  Scanning camera frames... [frame {}] {}     ",
+                                frames_scanned, msg
                             );
                             let _ = std::io::stdout().flush();
                         }
@@ -503,7 +508,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
 
                         if let Ok(faces) = engine.process_frame(&frame.gray_data, frame.width, frame.height) {
-                            let valid_face = faces.into_iter().find(|f| f.is_valid_human_face());
+                            let valid_face = faces.iter().find(|f| f.is_valid_human_face()).cloned();
                             if let Some(face) = valid_face {
                                 let (matched, guidance) = face.matches_target_pose(pose.id);
                                 let (yaw, pitch) = face.estimated_pose_ratios();
@@ -542,9 +547,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 }
                             } else {
                                 stable_frames = 0;
+                                let msg = if faces.iter().any(|f| !f.eyes_visible) {
+                                    "Eyes covered or occluded! Keep eyes open and uncovered"
+                                } else {
+                                    "Waiting for valid face... (keep head in camera view)"
+                                };
                                 print!(
-                                    "\r  [○○○] Waiting for valid face... (keep head in camera view) [frame {}] ",
-                                    frames_scanned
+                                    "\r  [○○○] ➔ {} [frame {}]     ",
+                                    msg, frames_scanned
                                 );
                                 let _ = std::io::stdout().flush();
                             }
@@ -588,12 +598,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Test { user, threshold, direct, device } => {
             let username = user.unwrap_or_else(get_current_username);
             let thresh = threshold.unwrap_or(DEFAULT_COSINE_THRESHOLD);
-            println!("Testing facial authentication for user '{}' (threshold: {:.2})...", username, thresh);
 
             let start = Instant::now();
 
-            // Try daemon first unless --direct is requested
-            if !direct && cli.socket.exists() {
+            // If a custom threshold or device is requested, run directly in-process.
+            // Normal authentication tests against the running daemon's authoritative security policy.
+            let use_direct = direct || threshold.is_some() || device.is_some();
+
+            if !use_direct && cli.socket.exists() {
+                println!("Testing facial authentication for user '{}' via daemon...", username);
                 let req = format!(
                     "{{\"action\":\"authenticate\",\"username\":\"{}\",\"timeout_ms\":4000}}",
                     username
@@ -615,6 +628,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 println!("Daemon did not respond, falling back to direct camera test...");
             }
+
+            println!("Testing direct facial authentication for user '{}' (threshold: {:.2})...", username, thresh);
 
             // Standalone direct test
             let storage = match Storage::new(&storage_dir) {
@@ -678,7 +693,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if let Ok(faces) = engine.process_frame(&frame.gray_data, frame.width, frame.height) {
+                    let mut face_seen_eyes_covered = false;
                     for face in faces {
+                        if !face.eyes_visible {
+                            face_seen_eyes_covered = true;
+                            continue;
+                        }
                         if !face.is_valid_human_face() {
                             continue;
                         }
@@ -698,6 +718,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     if matched {
                         break;
+                    }
+                    if face_seen_eyes_covered {
+                        print!(
+                            "\rAuthenticating... [frame {}] (eyes covered or occluded - uncover eyes)        ",
+                            frames_scanned
+                        );
+                        let _ = std::io::stdout().flush();
                     }
                 }
             }
@@ -754,13 +781,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (yaw, pitch) = face.estimated_pose_ratios();
                     let pose_desc = describe_pose(yaw, pitch);
                     println!("\n[Face #{}]", i + 1);
-                    println!("  Confidence:  {:.2}", face.score);
-                    println!("  BoundingBox: [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face.bbox.0, face.bbox.1, face.bbox.2, face.bbox.3);
-                    println!("  Pose Ratios: yaw: {:.2}, pitch: {:.2} ({})", yaw, pitch, pose_desc);
-                    println!("  Landmarks:   R-Eye ({:.1},{:.1}) | L-Eye ({:.1},{:.1}) | Nose ({:.1},{:.1})",
+                    println!("  Detector Conf: {:.2}", face.score);
+                    println!("  Eyes Visible:  {} (R: std={:.1}, rng={:.0} | L: std={:.1}, rng={:.0})",
+                             if face.eyes_visible { "YES (unoccluded)" } else { "NO (OCCLUDED / COVERED)" },
+                             face.eye_contrast.0, face.eye_range.0,
+                             face.eye_contrast.1, face.eye_range.1);
+                    println!("  BoundingBox:   [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face.bbox.0, face.bbox.1, face.bbox.2, face.bbox.3);
+                    println!("  Pose Ratios:   yaw: {:.2}, pitch: {:.2} ({})", yaw, pitch, pose_desc);
+                    println!("  Landmarks:     R-Eye ({:.1},{:.1}) | L-Eye ({:.1},{:.1}) | Nose ({:.1},{:.1})",
                              face.landmarks[0].0, face.landmarks[0].1,
                              face.landmarks[1].0, face.landmarks[1].1,
                              face.landmarks[2].0, face.landmarks[2].1);
+
+                    if !face.eyes_visible {
+                        println!("\n  Verdict:       [REJECTED - EYES OCCLUDED] Eyes are covered or occluded. Matching blocked.");
+                        continue;
+                    }
 
                     if let Some(ref p) = profile {
                         println!("\n  Comparison against '{}' ({} templates):", p.username, p.enrolled_embeddings.len());
@@ -769,17 +805,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         for (j, emb) in p.enrolled_embeddings.iter().enumerate() {
                             let sim = FaceEngine::cosine_similarity(&face.embedding, emb);
                             let label = p.labels.get(j).map(|s| s.as_str()).unwrap_or("unknown");
-                            println!("    • Template {:<12}: score = {:.4}", label, sim);
+                            println!("    • Template {:<12}: similarity = {:.4}", label, sim);
                             if sim > best_score {
                                 best_score = sim;
                                 best_label = label;
                             }
                         }
-                        println!("  Best Match:  {:.4} (template: '{}')", best_score, best_label);
+                        println!("  Best Match:    {:.4} (template: '{}')", best_score, best_label);
                         if best_score >= thresh {
-                            println!("  Verdict:     [MATCH SUCCESS] score {:.4} >= threshold {:.4}", best_score, thresh);
+                            println!("  Verdict:       [MATCH SUCCESS] similarity {:.4} >= threshold {:.4}", best_score, thresh);
                         } else {
-                            println!("  Verdict:     [NO MATCH] score {:.4} < threshold {:.4}", best_score, thresh);
+                            println!("  Verdict:       [NO MATCH] similarity {:.4} < threshold {:.4}", best_score, thresh);
                         }
                     }
                 }
@@ -847,7 +883,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let (yaw, pitch) = face.estimated_pose_ratios();
                     let pose_desc = describe_pose(yaw, pitch);
 
-                    let match_info = if let Some(ref p) = profile {
+                    let eye_tag = if face.eyes_visible {
+                        "Eyes: OK"
+                    } else {
+                        "Eyes: COVERED"
+                    };
+
+                    let match_info = if !face.eyes_visible {
+                        format!(" | [BLOCKED: Eyes Covered] (R:{:.1}, L:{:.1})", face.eye_contrast.0, face.eye_contrast.1)
+                    } else if let Some(ref p) = profile {
                         let mut best = -1.0f32;
                         let mut best_lbl = "";
                         for (j, emb) in p.enrolled_embeddings.iter().enumerate() {
@@ -864,16 +908,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             match_count += 1;
                             format!(" | MATCH: {:.3} ('{}')", best, best_lbl)
                         } else {
-                            format!(" | Score: {:.3} ('{}')", best, best_lbl)
+                            format!(" | Sim: {:.3} ('{}')", best, best_lbl)
                         }
                     } else {
                         String::new()
                     };
 
                     println!(
-                        "\r[{:04}] Bright: {:4.1} | Conf: {:.2} Box: [{:.0},{:.0},{:.0},{:.0}] | Pose: yaw={:.2} pitch={:.2} ({}) ({:.1}ms){}",
+                        "\r[{:04}] Bright: {:4.1} | DetConf: {:.2} | {} | Pose: yaw={:.2} pitch={:.2} ({}) ({:.1}ms){}",
                         frame_count, frame.mean_brightness, face.score,
-                        face.bbox.0, face.bbox.1, face.bbox.2, face.bbox.3,
+                        eye_tag,
                         yaw, pitch, pose_desc, det_ms, match_info
                     );
                 }
@@ -924,9 +968,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let face_a = &faces_a[0];
             let (yaw_a, pitch_a) = face_a.estimated_pose_ratios();
             println!("Image A ({}x{}):", w_a, h_a);
-            println!("  Confidence: {:.2}", face_a.score);
-            println!("  BBox:       [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face_a.bbox.0, face_a.bbox.1, face_a.bbox.2, face_a.bbox.3);
-            println!("  Pose:       yaw: {:.2}, pitch: {:.2} ({})", yaw_a, pitch_a, describe_pose(yaw_a, pitch_a));
+            println!("  Detector Conf: {:.2}", face_a.score);
+            println!("  Eyes Visible:  {}", if face_a.eyes_visible { "YES" } else { "NO (OCCLUDED / COVERED)" });
+            println!("  BBox:          [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face_a.bbox.0, face_a.bbox.1, face_a.bbox.2, face_a.bbox.3);
+            println!("  Pose:          yaw: {:.2}, pitch: {:.2} ({})", yaw_a, pitch_a, describe_pose(yaw_a, pitch_a));
 
             let faces_b = engine.process_frame(&gray_b, w_b, h_b)?;
             if faces_b.is_empty() {
@@ -936,9 +981,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let face_b = &faces_b[0];
             let (yaw_b, pitch_b) = face_b.estimated_pose_ratios();
             println!("\nImage B ({}x{}):", w_b, h_b);
-            println!("  Confidence: {:.2}", face_b.score);
-            println!("  BBox:       [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face_b.bbox.0, face_b.bbox.1, face_b.bbox.2, face_b.bbox.3);
-            println!("  Pose:       yaw: {:.2}, pitch: {:.2} ({})", yaw_b, pitch_b, describe_pose(yaw_b, pitch_b));
+            println!("  Detector Conf: {:.2}", face_b.score);
+            println!("  Eyes Visible:  {}", if face_b.eyes_visible { "YES" } else { "NO (OCCLUDED / COVERED)" });
+            println!("  BBox:          [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face_b.bbox.0, face_b.bbox.1, face_b.bbox.2, face_b.bbox.3);
+            println!("  Pose:          yaw: {:.2}, pitch: {:.2} ({})", yaw_b, pitch_b, describe_pose(yaw_b, pitch_b));
 
             let sim = FaceEngine::cosine_similarity(&face_a.embedding, &face_b.embedding);
 
@@ -987,9 +1033,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let face = &faces[0];
             let (yaw, pitch) = face.estimated_pose_ratios();
             println!("Detected Face in Image:");
-            println!("  Confidence: {:.2}", face.score);
-            println!("  BBox:       [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face.bbox.0, face.bbox.1, face.bbox.2, face.bbox.3);
-            println!("  Pose:       yaw: {:.2}, pitch: {:.2} ({})", yaw, pitch, describe_pose(yaw, pitch));
+            println!("  Detector Conf: {:.2}", face.score);
+            println!("  Eyes Visible:  {} (R: std={:.1}, L: std={:.1})",
+                     if face.eyes_visible { "YES" } else { "NO (OCCLUDED / COVERED)" },
+                     face.eye_contrast.0, face.eye_contrast.1);
+            println!("  BBox:          [x: {:.1}, y: {:.1}, w: {:.1}, h: {:.1}]", face.bbox.0, face.bbox.1, face.bbox.2, face.bbox.3);
+            println!("  Pose:          yaw: {:.2}, pitch: {:.2} ({})", yaw, pitch, describe_pose(yaw, pitch));
+
+            if !face.eyes_visible {
+                println!("\n-------------------------------------------------------");
+                println!("Verdict:          [AUTH FAILED] Face eyes are occluded or covered. Matching blocked.");
+                println!("=======================================================\n");
+                return Ok(());
+            }
 
             println!("\nSimilarity with Enrolled Templates:");
             let mut best_score = -1.0f32;

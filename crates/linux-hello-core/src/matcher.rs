@@ -1,7 +1,7 @@
 use crate::engine::{Face, FaceEngine};
 use crate::storage::UserProfile;
 
-pub const DEFAULT_COSINE_THRESHOLD: f32 = 0.50;
+pub const DEFAULT_COSINE_THRESHOLD: f32 = 0.65;
 
 #[derive(Debug, Clone)]
 pub struct MatchResult {
