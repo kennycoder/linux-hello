@@ -2,7 +2,7 @@ PREFIX ?= /usr
 DESTDIR ?=
 
 CARGO ?= cargo
-CARGO_FLAGS ?= --release --offline
+CARGO_FLAGS ?= --release
 
 # When running via sudo, inherit the invoking user's CARGO_HOME if root doesn't have one
 ifeq ($(CARGO_HOME),)
