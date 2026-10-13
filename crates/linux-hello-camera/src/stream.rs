@@ -1,9 +1,15 @@
-use std::ffi::CString;
+use std::fs::{self, File};
+use std::io;
+use std::num::NonZeroUsize;
+use std::os::fd::{AsFd, AsRawFd};
 use std::os::raw::c_void;
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::ptr;
+use std::ptr::NonNull;
 use thiserror::Error;
+
+use nix::poll::{poll, PollFd, PollFlags, PollTimeout};
+use nix::sys::mman::{mmap, munmap, MapFlags, ProtFlags};
 
 use crate::v4l2_sys::*;
 
@@ -46,12 +52,50 @@ impl Frame {
 }
 
 struct MmapBuffer {
-    start: *mut c_void,
+    ptr: NonNull<c_void>,
     length: usize,
 }
 
+impl MmapBuffer {
+    fn map(file: &File, length: usize, offset: u32) -> io::Result<Self> {
+        let non_zero_len = NonZeroUsize::new(length).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidInput, "V4L2 buffer length is zero")
+        })?;
+
+        // SAFETY: Mapping a valid V4L2 MMAP buffer file descriptor and offset returned by `VIDIOC_QUERYBUF`.
+        let ptr = unsafe {
+            mmap(
+                None,
+                non_zero_len,
+                ProtFlags::PROT_READ | ProtFlags::PROT_WRITE,
+                MapFlags::MAP_SHARED,
+                file,
+                i64::from(offset),
+            )
+        }
+        .map_err(io::Error::from)?;
+
+        Ok(Self { ptr, length })
+    }
+
+    fn as_slice(&self, bytes_used: usize) -> &[u8] {
+        let len = bytes_used.min(self.length);
+        // SAFETY: `self.ptr` points to a valid `MAP_SHARED` region of `self.length` bytes for the lifetime of `self`.
+        unsafe { std::slice::from_raw_parts(self.ptr.as_ptr() as *const u8, len) }
+    }
+}
+
+impl Drop for MmapBuffer {
+    fn drop(&mut self) {
+        // SAFETY: `self.ptr` and `self.length` were obtained from a successful `mmap` call in `MmapBuffer::map`.
+        unsafe {
+            let _ = munmap(self.ptr, self.length);
+        }
+    }
+}
+
 pub struct CameraStream {
-    fd: i32,
+    file: File,
     buffers: Vec<MmapBuffer>,
     pub width: u32,
     pub height: u32,
@@ -62,161 +106,122 @@ pub struct CameraStream {
     frames_seen: usize,
 }
 
-fn configure_roi(fd: i32, left: i32, top: i32, width: u32, height: u32) {
-    unsafe {
-        let mut rect = v4l2_rect {
-            left,
-            top,
-            width,
-            height,
-        };
-        let mut ext_ctrl = v4l2_ext_control {
-            id: V4L2_CID_REGION_OF_INTEREST_RECT,
-            size: std::mem::size_of::<v4l2_rect>() as u32,
-            reserved2: [0],
-            ptr: &mut rect as *mut _ as *mut c_void,
-        };
-        let mut ext_ctrls = v4l2_ext_controls {
-            which: 0,
-            count: 1,
-            error_idx: 0,
-            request_fd: 0,
-            reserved: [0],
-            controls: &mut ext_ctrl as *mut _,
-        };
-        let _ = xioctl(fd, VIDIOC_S_EXT_CTRLS, &mut ext_ctrls as *mut _ as *mut _);
+fn configure_roi(fd: &impl AsRawFd, left: i32, top: i32, width: u32, height: u32) {
+    let mut rect = v4l2_rect {
+        left,
+        top,
+        width,
+        height,
+    };
+    let mut ext_ctrl = v4l2_ext_control {
+        id: V4L2_CID_REGION_OF_INTEREST_RECT,
+        size: std::mem::size_of::<v4l2_rect>() as u32,
+        reserved2: [0],
+        ptr: (&mut rect as *mut v4l2_rect).cast::<c_void>(),
+    };
+    let mut ext_ctrls = v4l2_ext_controls {
+        which: 0,
+        count: 1,
+        error_idx: 0,
+        request_fd: 0,
+        reserved: [0],
+        controls: &mut ext_ctrl,
+    };
+    let _ = s_ext_ctrls(fd, &mut ext_ctrls);
 
-        let mut auto_ctrl = v4l2_control {
-            id: V4L2_CID_REGION_OF_INTEREST_AUTO,
-            value: V4L2_CID_REGION_OF_INTEREST_AUTO_EXPOSURE,
-        };
-        let _ = xioctl(fd, VIDIOC_S_CTRL, &mut auto_ctrl as *mut _ as *mut _);
-    }
+    let mut auto_ctrl = v4l2_control {
+        id: V4L2_CID_REGION_OF_INTEREST_AUTO,
+        value: V4L2_CID_REGION_OF_INTEREST_AUTO_EXPOSURE,
+    };
+    let _ = s_ctrl(fd, &mut auto_ctrl);
 }
 
 impl CameraStream {
     pub fn open(path: &Path, width: u32, height: u32) -> Result<Self, CameraError> {
-        let c_path = CString::new(path.as_os_str().as_bytes()).map_err(|e| CameraError::OpenDevice {
-            path: path.to_path_buf(),
-            source: std::io::Error::new(std::io::ErrorKind::InvalidInput, e),
-        })?;
-
-        let fd = unsafe { libc::open(c_path.as_ptr(), libc::O_RDWR | libc::O_NONBLOCK) };
-        if fd < 0 {
-            return Err(CameraError::OpenDevice {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(nix::libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|source| CameraError::OpenDevice {
                 path: path.to_path_buf(),
-                source: std::io::Error::last_os_error(),
-            });
+                source,
+            })?;
+
+        // Set pixel format to GREY, falling back to YUYV if GREY is unsupported
+        let mut fmt = v4l2_format::default();
+        fmt.set_pix_format(width, height, V4L2_PIX_FMT_GREY, V4L2_FIELD_ANY);
+
+        if s_fmt(&file, &mut fmt).is_err() {
+            fmt.set_pix_format(width, height, V4L2_PIX_FMT_YUYV, V4L2_FIELD_ANY);
+            s_fmt(&file, &mut fmt).map_err(|source| CameraError::Ioctl {
+                name: "VIDIOC_S_FMT",
+                source,
+            })?;
         }
 
-        // Set pixel format to GREY
-        let mut fmt: v4l2_format = unsafe { std::mem::zeroed() };
-        fmt.type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        unsafe {
-            fmt.fmt.pix.width = width;
-            fmt.fmt.pix.height = height;
-            fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_GREY;
-            fmt.fmt.pix.field = V4L2_FIELD_ANY;
-
-            if xioctl(fd, VIDIOC_S_FMT, &mut fmt as *mut _ as *mut _) < 0 {
-                // If GREY failed, try YUYV
-                fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
-                if xioctl(fd, VIDIOC_S_FMT, &mut fmt as *mut _ as *mut _) < 0 {
-                    libc::close(fd);
-                    return Err(CameraError::Ioctl {
-                        name: "VIDIOC_S_FMT",
-                        source: std::io::Error::last_os_error(),
-                    });
-                }
-            }
-        }
-
-        let actual_width = unsafe { fmt.fmt.pix.width };
-        let actual_height = unsafe { fmt.fmt.pix.height };
-        let actual_pixfmt = unsafe { fmt.fmt.pix.pixelformat };
+        let pix = fmt.pix_format();
+        let actual_width = pix.width;
+        let actual_height = pix.height;
+        let actual_pixfmt = pix.pixelformat;
 
         // Initialize UVC Region of Interest (ROI) Auto-Exposure to the full frame
         // (fixing devices that boot with a broken 1x1 ROI at (0,0)), and narrow to the face once detected.
         if actual_width >= 64 && actual_height >= 64 {
-            configure_roi(fd, 0, 0, actual_width, actual_height);
+            configure_roi(&file, 0, 0, actual_width, actual_height);
         }
 
         // Request 4 MMAP buffers
-        let mut req: v4l2_requestbuffers = unsafe { std::mem::zeroed() };
-        req.count = 4;
-        req.type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        req.memory = V4L2_MEMORY_MMAP;
+        let mut req = v4l2_requestbuffers {
+            count: 4,
+            type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+            memory: V4L2_MEMORY_MMAP,
+            ..Default::default()
+        };
 
-        if unsafe { xioctl(fd, VIDIOC_REQBUFS, &mut req as *mut _ as *mut _) } < 0 {
-            unsafe { libc::close(fd) };
-            return Err(CameraError::Ioctl {
-                name: "VIDIOC_REQBUFS",
-                source: std::io::Error::last_os_error(),
-            });
-        }
+        reqbufs(&file, &mut req).map_err(|source| CameraError::Ioctl {
+            name: "VIDIOC_REQBUFS",
+            source,
+        })?;
 
         let mut buffers = Vec::with_capacity(req.count as usize);
 
         for i in 0..req.count {
-            let mut buf: v4l2_buffer = unsafe { std::mem::zeroed() };
-            buf.type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            buf.memory = V4L2_MEMORY_MMAP;
-            buf.index = i;
-
-            if unsafe { xioctl(fd, VIDIOC_QUERYBUF, &mut buf as *mut _ as *mut _) } < 0 {
-                unsafe { libc::close(fd) };
-                return Err(CameraError::Ioctl {
-                    name: "VIDIOC_QUERYBUF",
-                    source: std::io::Error::last_os_error(),
-                });
-            }
-
-            let start = unsafe {
-                libc::mmap(
-                    ptr::null_mut(),
-                    buf.length as usize,
-                    libc::PROT_READ | libc::PROT_WRITE,
-                    libc::MAP_SHARED,
-                    fd,
-                    buf.m.offset as i64,
-                )
+            let mut buf = v4l2_buffer {
+                type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+                memory: V4L2_MEMORY_MMAP,
+                index: i,
+                ..Default::default()
             };
 
-            if start == libc::MAP_FAILED {
-                unsafe { libc::close(fd) };
-                return Err(CameraError::Ioctl {
-                    name: "mmap",
-                    source: std::io::Error::last_os_error(),
-                });
-            }
+            querybuf(&file, &mut buf).map_err(|source| CameraError::Ioctl {
+                name: "VIDIOC_QUERYBUF",
+                source,
+            })?;
 
-            buffers.push(MmapBuffer {
-                start,
-                length: buf.length as usize,
-            });
+            let mmap_buf = MmapBuffer::map(&file, buf.length as usize, buf.offset()).map_err(|source| {
+                CameraError::Ioctl {
+                    name: "mmap",
+                    source,
+                }
+            })?;
+            buffers.push(mmap_buf);
 
             // Queue buffer
-            if unsafe { xioctl(fd, VIDIOC_QBUF, &mut buf as *mut _ as *mut _) } < 0 {
-                unsafe { libc::close(fd) };
-                return Err(CameraError::Ioctl {
-                    name: "VIDIOC_QBUF",
-                    source: std::io::Error::last_os_error(),
-                });
-            }
+            qbuf(&file, &mut buf).map_err(|source| CameraError::Ioctl {
+                name: "VIDIOC_QBUF",
+                source,
+            })?;
         }
 
         // Stream ON
-        let mut type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        if unsafe { xioctl(fd, VIDIOC_STREAMON, &mut type_ as *mut _ as *mut _) } < 0 {
-            unsafe { libc::close(fd) };
-            return Err(CameraError::Ioctl {
-                name: "VIDIOC_STREAMON",
-                source: std::io::Error::last_os_error(),
-            });
-        }
+        streamon(&file, V4L2_BUF_TYPE_VIDEO_CAPTURE).map_err(|source| CameraError::Ioctl {
+            name: "VIDIOC_STREAMON",
+            source,
+        })?;
 
         let mut stream = CameraStream {
-            fd,
+            file,
             buffers,
             width: actual_width,
             height: actual_height,
@@ -253,57 +258,51 @@ impl CameraStream {
         let top = ((y - pad_y).round() as i32).clamp(0, self.height as i32 - 32);
         let roi_w = ((w + 2.0 * pad_x).round() as u32).clamp(32, self.width - left as u32);
         let roi_h = ((h + 2.0 * pad_y).round() as u32).clamp(32, self.height - top as u32);
-        configure_roi(self.fd, left, top, roi_w, roi_h);
+        configure_roi(&self.file, left, top, roi_w, roi_h);
     }
 
     /// Resets the camera's hardware Auto-Exposure ROI to the full frame when no face is currently tracked.
     pub fn reset_roi(&mut self) {
         if self.width >= 64 && self.height >= 64 {
-            configure_roi(self.fd, 0, 0, self.width, self.height);
+            configure_roi(&self.file, 0, 0, self.width, self.height);
         }
     }
 
     fn dequeue_raw_frame(&mut self, timeout_ms: u32) -> Result<(Frame, f32, f32, f32), CameraError> {
-        let mut fds = libc::pollfd {
-            fd: self.fd,
-            events: libc::POLLIN,
-            revents: 0,
+        let mut fds = [PollFd::new(self.file.as_fd(), PollFlags::POLLIN)];
+        let poll_timeout = PollTimeout::try_from(timeout_ms).unwrap_or(PollTimeout::MAX);
+
+        match poll(&mut fds, poll_timeout) {
+            Ok(n) if n > 0 => {}
+            _ => return Err(CameraError::Timeout { timeout_ms }),
+        }
+
+        let mut buf = v4l2_buffer {
+            type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+            memory: V4L2_MEMORY_MMAP,
+            ..Default::default()
         };
 
-        let ret = unsafe { libc::poll(&mut fds, 1, timeout_ms as i32) };
-        if ret <= 0 {
-            return Err(CameraError::Timeout { timeout_ms });
-        }
-
-        let mut buf: v4l2_buffer = unsafe { std::mem::zeroed() };
-        buf.type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        buf.memory = V4L2_MEMORY_MMAP;
-
-        if unsafe { xioctl(self.fd, VIDIOC_DQBUF, &mut buf as *mut _ as *mut _) } < 0 {
-            return Err(CameraError::Ioctl {
-                name: "VIDIOC_DQBUF",
-                source: std::io::Error::last_os_error(),
-            });
-        }
+        dqbuf(&self.file, &mut buf).map_err(|source| CameraError::Ioctl {
+            name: "VIDIOC_DQBUF",
+            source,
+        })?;
 
         let index = buf.index as usize;
         let bytes_used = buf.bytesused as usize;
-        let mmap_buf = &self.buffers[index];
+        let src_slice = self.buffers[index].as_slice(bytes_used);
 
         let expected_size = (self.width * self.height) as usize;
         let mut gray_data = vec![0u8; expected_size];
 
-        unsafe {
-            let src_slice = std::slice::from_raw_parts(mmap_buf.start as *const u8, bytes_used.min(mmap_buf.length));
-            if self.pixelformat == V4L2_PIX_FMT_YUYV && src_slice.len() >= expected_size * 2 {
-                for (i, dst) in gray_data.iter_mut().enumerate() {
-                    *dst = src_slice[i * 2];
-                }
-            } else if src_slice.len() >= expected_size {
-                gray_data.copy_from_slice(&src_slice[..expected_size]);
-            } else {
-                gray_data[..src_slice.len()].copy_from_slice(src_slice);
+        if self.pixelformat == V4L2_PIX_FMT_YUYV && src_slice.len() >= expected_size * 2 {
+            for (i, dst) in gray_data.iter_mut().enumerate() {
+                *dst = src_slice[i * 2];
             }
+        } else if src_slice.len() >= expected_size {
+            gray_data.copy_from_slice(&src_slice[..expected_size]);
+        } else {
+            gray_data[..src_slice.len()].copy_from_slice(src_slice);
         }
 
         // Calculate full-frame mean brightness
@@ -353,12 +352,10 @@ impl CameraStream {
         };
 
         // Re-queue the buffer
-        if unsafe { xioctl(self.fd, VIDIOC_QBUF, &mut buf as *mut _ as *mut _) } < 0 {
-            return Err(CameraError::Ioctl {
-                name: "VIDIOC_QBUF",
-                source: std::io::Error::last_os_error(),
-            });
-        }
+        qbuf(&self.file, &mut buf).map_err(|source| CameraError::Ioctl {
+            name: "VIDIOC_QBUF",
+            source,
+        })?;
 
         Ok((
             Frame {
@@ -453,15 +450,8 @@ impl CameraStream {
 
 impl Drop for CameraStream {
     fn drop(&mut self) {
-        unsafe {
-            let mut type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-            xioctl(self.fd, VIDIOC_STREAMOFF, &mut type_ as *mut _ as *mut _);
-
-            for buf in &self.buffers {
-                libc::munmap(buf.start, buf.length);
-            }
-
-            libc::close(self.fd);
-        }
+        let _ = streamoff(&self.file, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+        // `self.buffers` and `self.file` are automatically unmapped and closed via their `Drop` impls.
     }
 }
+

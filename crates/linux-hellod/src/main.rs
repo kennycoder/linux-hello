@@ -1,11 +1,11 @@
 use clap::Parser;
+use nix::sys::signal::{SigSet, Signal};
+use nix::sys::signalfd::{SfdFlags, SignalFd};
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 
 mod protocol;
 mod service;
@@ -50,12 +50,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         args.models_dir
     };
 
-    let service = Arc::new(HelloService::new(
+    let service = HelloService::new(
         &models_dir,
         &args.storage_dir,
         args.camera.as_deref(),
         args.threshold,
-    )?);
+    )?;
 
     // Clean up old socket file if it exists
     if args.socket.exists() {
@@ -71,23 +71,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     log::info!("Listening on Unix socket: {:?}", args.socket);
 
-    let running = Arc::new(AtomicBool::new(true));
-    let _r = running.clone();
-
-    // Signal handling
-    unsafe {
-        libc::signal(libc::SIGINT, sig_handler as usize);
-        libc::signal(libc::SIGTERM, sig_handler as usize);
-    }
+    // Block SIGINT and SIGTERM and handle them synchronously via signalfd
+    let mut sig_mask = SigSet::empty();
+    sig_mask.add(Signal::SIGINT);
+    sig_mask.add(Signal::SIGTERM);
+    sig_mask.thread_block()?;
+    let sigfd = SignalFd::with_flags(&sig_mask, SfdFlags::SFD_NONBLOCK | SfdFlags::SFD_CLOEXEC)?;
 
     listener.set_nonblocking(true)?;
 
-    while running.load(Ordering::SeqCst) {
+    loop {
+        if let Ok(Some(_)) = sigfd.read_signal() {
+            break;
+        }
+
         match listener.accept() {
             Ok((stream, _)) => {
-                let service = service.clone();
                 handle_client(stream, &service);
             }
+
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(std::time::Duration::from_millis(50));
             }
@@ -102,10 +104,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-extern "C" fn sig_handler(_: libc::c_int) {
-    // Process termination
-    std::process::exit(0);
-}
+
 
 fn handle_client(mut stream: UnixStream, service: &HelloService) {
     let mut reader = BufReader::new(match stream.try_clone() {
