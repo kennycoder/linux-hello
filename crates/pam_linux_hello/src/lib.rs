@@ -42,7 +42,7 @@ pub struct PamConv {
 
 pub enum PamHandle {}
 
-extern "C" {
+unsafe extern "C" {
     fn pam_get_user(
         pamh: *const PamHandle,
         user: *mut *const c_char,
@@ -57,40 +57,45 @@ extern "C" {
 }
 
 fn send_pam_info(pamh: *const PamHandle, text: &str) {
-    unsafe {
-        let mut conv_ptr: *const c_void = std::ptr::null();
-        if pam_get_item(pamh, PAM_CONV, &mut conv_ptr) != PAM_SUCCESS || conv_ptr.is_null() {
-            return;
-        }
+    let c_msg = match CString::new(text) {
+        Ok(s) => s,
+        Err(_) => return,
+    };
 
-        let conv = &*(conv_ptr as *const PamConv);
-        if let Some(conv_fn) = conv.conv {
-            let c_msg = match CString::new(text) {
-                Ok(s) => s,
-                Err(_) => return,
-            };
+    let mut conv_ptr: *const c_void = std::ptr::null();
 
-            let msg = PamMessage {
-                msg_style: PAM_TEXT_INFO,
-                msg: c_msg.as_ptr(),
-            };
+    let status = unsafe { pam_get_item(pamh, PAM_CONV, &mut conv_ptr) };
+    if status != PAM_SUCCESS || conv_ptr.is_null() {
+        return;
+    }
 
-            let mut msg_ptr = &msg as *const PamMessage;
-            let mut resp_ptr: *mut PamResponse = std::ptr::null_mut();
+    let conv = unsafe { &*(conv_ptr as *const PamConv) };
+    let Some(conv_fn) = conv.conv else {
+        return;
+    };
 
-            conv_fn(1, &mut msg_ptr, &mut resp_ptr, conv.appdata_ptr);
+    let msg = PamMessage {
+        msg_style: PAM_TEXT_INFO,
+        msg: c_msg.as_ptr(),
+    };
 
-            if !resp_ptr.is_null() {
-                if !(*resp_ptr).resp.is_null() {
-                    libc::free((*resp_ptr).resp as *mut c_void);
-                }
-                libc::free(resp_ptr as *mut c_void);
+    let mut msg_ptr = &msg as *const PamMessage;
+    let mut resp_ptr: *mut PamResponse = std::ptr::null_mut();
+
+    conv_fn(1, &mut msg_ptr, &mut resp_ptr, conv.appdata_ptr);
+
+    if !resp_ptr.is_null() {
+        unsafe {
+            let resp_buf = (*resp_ptr).resp;
+            if !resp_buf.is_null() {
+                libc::free(resp_buf.cast::<c_void>());
             }
+            libc::free(resp_ptr.cast::<c_void>());
         }
     }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pam_sm_authenticate(
     pamh: *mut PamHandle,
     _flags: c_int,
@@ -98,12 +103,12 @@ pub unsafe extern "C" fn pam_sm_authenticate(
     argv: *const *const c_char,
 ) -> c_int {
     let mut username_ptr: *const c_char = std::ptr::null();
-    let status = pam_get_user(pamh, &mut username_ptr, std::ptr::null());
+    let status = unsafe { pam_get_user(pamh, &mut username_ptr, std::ptr::null()) };
     if status != PAM_SUCCESS || username_ptr.is_null() {
         return PAM_USER_UNKNOWN;
     }
 
-    let username = match CStr::from_ptr(username_ptr).to_str() {
+    let username = match unsafe { CStr::from_ptr(username_ptr) }.to_str() {
         Ok(s) => s,
         Err(_) => return PAM_AUTH_ERR,
     };
@@ -113,23 +118,26 @@ pub unsafe extern "C" fn pam_sm_authenticate(
     let mut timeout_ms: u64 = 3500;
     let mut quiet = false;
 
-    for i in 0..argc as isize {
-        let arg_ptr = *argv.offset(i);
-        if arg_ptr.is_null() {
-            continue;
-        }
-        if let Ok(arg) = CStr::from_ptr(arg_ptr).to_str() {
-            if let Some(s) = arg.strip_prefix("socket=") {
-                socket_path = s.to_string();
-            } else if let Some(t) = arg.strip_prefix("timeout=") {
-                if let Ok(ms) = t.parse::<u64>() {
-                    timeout_ms = ms;
+    if !argv.is_null() && argc > 0 {
+        let arg_ptrs = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
+        for &arg_ptr in arg_ptrs {
+            if arg_ptr.is_null() {
+                continue;
+            }
+            if let Ok(arg) = unsafe { CStr::from_ptr(arg_ptr) }.to_str() {
+                if let Some(s) = arg.strip_prefix("socket=") {
+                    socket_path = s.to_string();
+                } else if let Some(t) = arg.strip_prefix("timeout=") {
+                    if let Ok(ms) = t.parse::<u64>() {
+                        timeout_ms = ms;
+                    }
+                } else if arg == "quiet" {
+                    quiet = true;
                 }
-            } else if arg == "quiet" {
-                quiet = true;
             }
         }
     }
+
 
     // If socket does not exist, daemon is offline: fall back quietly to password
     if !Path::new(&socket_path).exists() {
@@ -176,7 +184,7 @@ pub unsafe extern "C" fn pam_sm_authenticate(
     PAM_AUTH_ERR
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn pam_sm_setcred(
     _pamh: *mut PamHandle,
     _flags: c_int,
@@ -185,3 +193,4 @@ pub unsafe extern "C" fn pam_sm_setcred(
 ) -> c_int {
     PAM_SUCCESS
 }
+

@@ -1,6 +1,7 @@
 use std::ffi::CStr;
 use std::fs;
-use std::path::PathBuf;
+use std::os::unix::fs::OpenOptionsExt;
+use std::path::{Path, PathBuf};
 
 use crate::v4l2_sys::*;
 
@@ -11,6 +12,12 @@ pub struct CameraInfo {
     pub driver: String,
     pub formats: Vec<String>,
     pub is_ir: bool,
+}
+
+fn c_bytes_to_string(bytes: &[u8]) -> String {
+    CStr::from_bytes_until_nul(bytes)
+        .map(|cstr| cstr.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| String::from_utf8_lossy(bytes).into_owned())
 }
 
 pub fn discover_cameras() -> Vec<CameraInfo> {
@@ -40,65 +47,56 @@ pub fn discover_cameras() -> Vec<CameraInfo> {
     cameras
 }
 
-pub fn inspect_camera(path: &PathBuf) -> Option<CameraInfo> {
-    use std::os::unix::ffi::OsStrExt;
-    let path_cstr = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+pub fn inspect_camera(path: &Path) -> Option<CameraInfo> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .custom_flags(nix::libc::O_NONBLOCK)
+        .open(path)
+        .ok()?;
 
-    unsafe {
-        let fd = libc::open(path_cstr.as_ptr(), libc::O_RDWR | libc::O_NONBLOCK);
-        if fd < 0 {
-            return None;
-        }
+    let mut cap = v4l2_capability::default();
+    querycap(&file, &mut cap).ok()?;
 
-        let mut cap: v4l2_capability = std::mem::zeroed();
-        if xioctl(fd, VIDIOC_QUERYCAP, &mut cap as *mut _ as *mut _) < 0 {
-            libc::close(fd);
-            return None;
-        }
+    let card = c_bytes_to_string(&cap.card);
+    let driver = c_bytes_to_string(&cap.driver);
 
-        let card = CStr::from_ptr(cap.card.as_ptr() as *const _).to_string_lossy().into_owned();
-        let driver = CStr::from_ptr(cap.driver.as_ptr() as *const _).to_string_lossy().into_owned();
+    let mut formats = Vec::new();
+    let mut is_ir = false;
 
-        let mut formats = Vec::new();
-        let mut is_ir = false;
+    let mut fmtdesc = v4l2_fmtdesc {
+        type_: V4L2_BUF_TYPE_VIDEO_CAPTURE,
+        ..Default::default()
+    };
 
-        let mut fmtdesc: v4l2_fmtdesc = std::mem::zeroed();
-        fmtdesc.type_ = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    while enum_fmt(&file, &mut fmtdesc).is_ok() {
+        let fourcc = fmtdesc.pixelformat.to_le_bytes();
+        let fourcc_str = String::from_utf8_lossy(&fourcc).into_owned();
+        formats.push(fourcc_str.clone());
 
-        loop {
-            if xioctl(fd, VIDIOC_ENUM_FMT, &mut fmtdesc as *mut _ as *mut _) < 0 {
-                break;
-            }
-
-            let fourcc = fmtdesc.pixelformat.to_le_bytes();
-            let fourcc_str = String::from_utf8_lossy(&fourcc).into_owned();
-            formats.push(fourcc_str.clone());
-
-            if fmtdesc.pixelformat == V4L2_PIX_FMT_GREY || fourcc_str == "Y16 " || fourcc_str == "Z16 " {
-                is_ir = true;
-            }
-
-            fmtdesc.index += 1;
-        }
-
-        libc::close(fd);
-
-        let lower_card = card.to_lowercase();
-        if lower_card.contains("ir") || lower_card.contains("infra") {
+        if fmtdesc.pixelformat == V4L2_PIX_FMT_GREY || fourcc_str == "Y16 " || fourcc_str == "Z16 " {
             is_ir = true;
         }
 
-        // Must have at least one capture format
-        if formats.is_empty() {
-            return None;
-        }
-
-        Some(CameraInfo {
-            path: path.clone(),
-            card,
-            driver,
-            formats,
-            is_ir,
-        })
+        fmtdesc.index += 1;
     }
+
+    // Must have at least one capture format
+    if formats.is_empty() {
+        return None;
+    }
+
+    let lower_card = card.to_lowercase();
+    if lower_card.contains("ir") || lower_card.contains("infra") {
+        is_ir = true;
+    }
+
+    Some(CameraInfo {
+        path: path.to_path_buf(),
+        card,
+        driver,
+        formats,
+        is_ir,
+    })
 }
+

@@ -1,55 +1,37 @@
-use std::os::raw::{c_char, c_float, c_int, c_uchar};
+#[cxx::bridge]
+pub mod ffi {
+    #[derive(Debug, Clone)]
+    pub struct RawFace {
+        pub x: f32,
+        pub y: f32,
+        pub width: f32,
+        pub height: f32,
+        pub score: f32,
+        pub landmarks: [f32; 10],
+        pub embedding: [f32; 128],
+    }
 
-#[repr(C)]
-#[derive(Debug, Copy, Clone)]
-pub struct RawFace {
-    pub x: c_float,
-    pub y: c_float,
-    pub width: c_float,
-    pub height: c_float,
-    pub score: c_float,
-    pub landmarks: [c_float; 10],
-    pub embedding: [c_float; 128],
-}
+    unsafe extern "C++" {
+        include!("face_engine.h");
 
-impl Default for RawFace {
-    fn default() -> Self {
-        Self {
-            x: 0.0,
-            y: 0.0,
-            width: 0.0,
-            height: 0.0,
-            score: 0.0,
-            landmarks: [0.0; 10],
-            embedding: [0.0; 128],
-        }
+        type FaceEngineCpp;
+
+        pub fn new_face_engine(
+            det_model_path: &str,
+            rec_model_path: &str,
+            width: i32,
+            height: i32,
+        ) -> Result<UniquePtr<FaceEngineCpp>>;
+
+        pub fn detect_and_embed(
+            engine: &FaceEngineCpp,
+            gray_data: &[u8],
+            width: i32,
+            height: i32,
+            max_faces: usize,
+        ) -> Result<Vec<RawFace>>;
     }
 }
 
-pub enum FaceEngineOpaque {}
+pub use ffi::*;
 
-extern "C" {
-    pub fn face_engine_new(
-        det_model_path: *const c_char,
-        rec_model_path: *const c_char,
-        width: c_int,
-        height: c_int,
-    ) -> *mut FaceEngineOpaque;
-
-    pub fn face_engine_free(engine: *mut FaceEngineOpaque);
-
-    pub fn face_engine_detect_and_embed(
-        engine: *mut FaceEngineOpaque,
-        gray_data: *const c_uchar,
-        width: c_int,
-        height: c_int,
-        out_faces: *mut RawFace,
-        max_faces: c_int,
-    ) -> c_int;
-
-    pub fn face_engine_cosine_distance(
-        feat1: *const c_float,
-        feat2: *const c_float,
-        len: c_int,
-    ) -> c_float;
-}

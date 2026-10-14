@@ -1,5 +1,5 @@
-use std::ffi::CString;
 use std::path::Path;
+use cxx::UniquePtr;
 use thiserror::Error;
 
 use crate::ffi::*;
@@ -13,6 +13,7 @@ pub enum EngineError {
     #[error("Invalid path: {0}")]
     InvalidPath(String),
 }
+
 
 #[derive(Debug, Clone)]
 pub struct Face {
@@ -176,64 +177,42 @@ impl Face {
 }
 
 pub struct FaceEngine {
-    ptr: *mut FaceEngineOpaque,
+    inner: UniquePtr<FaceEngineCpp>,
 }
 
-unsafe impl Send for FaceEngine {}
-unsafe impl Sync for FaceEngine {}
-
 impl FaceEngine {
+
     pub fn new(det_path: &Path, rec_path: &Path, width: u32, height: u32) -> Result<Self, EngineError> {
-        let det_cstr = CString::new(det_path.to_string_lossy().as_bytes())
-            .map_err(|_| EngineError::InvalidPath(det_path.to_string_lossy().into()))?;
-        let rec_cstr = CString::new(rec_path.to_string_lossy().as_bytes())
-            .map_err(|_| EngineError::InvalidPath(rec_path.to_string_lossy().into()))?;
+        let det_str = det_path
+            .to_str()
+            .ok_or_else(|| EngineError::InvalidPath(det_path.to_string_lossy().into()))?;
+        let rec_str = rec_path
+            .to_str()
+            .ok_or_else(|| EngineError::InvalidPath(rec_path.to_string_lossy().into()))?;
 
-        let ptr = unsafe {
-            face_engine_new(
-                det_cstr.as_ptr(),
-                rec_cstr.as_ptr(),
-                width as i32,
-                height as i32,
-            )
-        };
+        let inner = new_face_engine(det_str, rec_str, width as i32, height as i32).map_err(|e| {
+            EngineError::ModelLoad(format!(
+                "Detector: {:?}, Recognizer: {:?} ({})",
+                det_path, rec_path, e
+            ))
+        })?;
 
-        if ptr.is_null() {
-            return Err(EngineError::ModelLoad(format!(
-                "Detector: {:?}, Recognizer: {:?}",
-                det_path, rec_path
-            )));
-        }
-
-        Ok(FaceEngine { ptr })
+        Ok(FaceEngine { inner })
     }
 
     pub fn process_frame(&self, gray_data: &[u8], width: u32, height: u32) -> Result<Vec<Face>, EngineError> {
         const MAX_FACES: usize = 10;
-        let mut raw_faces = [RawFace::default(); MAX_FACES];
 
-        let count = unsafe {
-            face_engine_detect_and_embed(
-                self.ptr,
-                gray_data.as_ptr(),
-                width as i32,
-                height as i32,
-                raw_faces.as_mut_ptr(),
-                MAX_FACES as i32,
-            )
-        };
+        let raw_faces = detect_and_embed(&self.inner, gray_data, width as i32, height as i32, MAX_FACES)
+            .map_err(|_| EngineError::ProcessingError)?;
 
-        if count < 0 {
-            return Err(EngineError::ProcessingError);
-        }
-
-        let mut faces = Vec::with_capacity(count as usize);
-        for i in 0..count as usize {
-            let rf = &raw_faces[i];
+        let mut faces = Vec::with_capacity(raw_faces.len());
+        for rf in &raw_faces {
             let mut landmarks = [(0.0, 0.0); 5];
             for l in 0..5 {
                 landmarks[l] = (rf.landmarks[l * 2], rf.landmarks[l * 2 + 1]);
             }
+
 
             let eye_dist = (landmarks[1].0 - landmarks[0].0).hypot(landmarks[1].1 - landmarks[0].1);
             let (r_std, r_range) = Self::compute_eye_metrics(gray_data, width, height, landmarks[0].0, landmarks[0].1, eye_dist);
@@ -415,20 +394,23 @@ impl FaceEngine {
         if feat1.len() != feat2.len() || feat1.is_empty() {
             return 0.0;
         }
-        unsafe {
-            face_engine_cosine_distance(feat1.as_ptr(), feat2.as_ptr(), feat1.len() as i32)
+        let mut dot = 0.0f64;
+        let mut norm1 = 0.0f64;
+        let mut norm2 = 0.0f64;
+        for (&a, &b) in feat1.iter().zip(feat2.iter()) {
+            let a = f64::from(a);
+            let b = f64::from(b);
+            dot += a * b;
+            norm1 += a * a;
+            norm2 += b * b;
         }
+        if norm1 <= 0.0 || norm2 <= 0.0 {
+            return 0.0;
+        }
+        (dot / (norm1.sqrt() * norm2.sqrt())) as f32
     }
 }
 
-impl Drop for FaceEngine {
-    fn drop(&mut self) {
-        if !self.ptr.is_null() {
-            unsafe { face_engine_free(self.ptr) };
-            self.ptr = std::ptr::null_mut();
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {

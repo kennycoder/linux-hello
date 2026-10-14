@@ -20,7 +20,7 @@ Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrare
 ## Features
 
 - **Dedicated IR Camera Support**:
-  - Direct Linux V4L2 `mmap` streaming on `/dev/video2` (or auto-detected IR device).
+  - Direct Linux V4L2 `mmap` streaming on `/dev/video{n}` (usually 2, but it also auto-detects IR camera).
   - Automatically filters illuminated infrared strobe frames from ambient/dark frames.
   - **Hardware Safeguard**: Strictly verifies dedicated IR camera capabilities (via `GREY`, `Y16`, `Z16` formats or IR device card metadata). Never defaults to a standard RGB webcam (`/dev/video0`) to prevent insecure fallback.
 - **Modern Face Biometrics**: Powered by OpenCV Zoo ONNX models:
@@ -103,12 +103,41 @@ linux-hello/
 
 ---
 
+## Prerequisites & Build Dependencies
+
+When building from source, `linux-hello-core` compiles a C++17 bridge against **OpenCV 4** (`opencv_core`, `opencv_dnn`, `opencv_objdetect`, `opencv_imgproc`) to accelerate YuNet (`cv::FaceDetectorYN`) and SFace (`cv::FaceRecognizerSF`) ONNX inference.
+
+Install the required system dependencies for your distribution:
+
+- **Debian / Ubuntu**:
+  ```bash
+  sudo apt update
+  sudo apt install build-essential libopencv-dev libpam0g-dev
+  ```
+- **RHEL / Fedora / Rocky / AlmaLinux**:
+  ```bash
+  sudo dnf install gcc-c++ make opencv-devel pam-devel
+  ```
+- **Arch Linux**:
+  ```bash
+  sudo pacman -S --needed base-devel opencv pam
+  ```
+
+You also need a **Rust toolchain** (Rust 1.85+ for the 2024 edition, via [rustup.rs](https://rustup.rs/) or your system package manager). Verify all build prerequisites at any time with:
+
+```bash
+make check-deps
+```
+
+---
+
 ## Quick Start
 
 ### 1. Build
 ```bash
 make
 ```
+*(To clean build artifacts at any time, run `make clean`.)*
 
 ### 2. Inspect Connected Cameras
 ```bash
@@ -226,47 +255,56 @@ Authenticate directly against camera hardware and local profile storage, complet
 
 ---
 
-## System Installation & Debian PAM Setup
+## System Installation & PAM Setup
 
-### Option A: Install from Debian Package (.deb) — Recommended
+### Option A: Install from Debian Package (.deb) — Debian / Ubuntu
 
 Download the latest `.deb` package from [GitHub Releases](https://github.com/kennycoder/linux-hello/releases) or build it locally with `make deb`:
 
 ```bash
-# Install package (apt automatically resolves all runtime dependencies)
+# Install package (apt automatically resolves all runtime dependencies, including OpenCV runtime libs)
 sudo apt install ./linux-hello_*_amd64.deb
 ```
 
 The Debian package automatically:
 - Installs `linux-hello`, `linux-hellod`, and `pam_linux_hello.so`.
-- Downloads and places YuNet and SFace ONNX models in `/usr/share/linux-hello/models`.
+- Installs the bundled YuNet and SFace ONNX models (`models/*.onnx`) into `/usr/share/linux-hello/models` (no network download required during install).
 - Enables and starts `linux-hello.service` in systemd.
 - Registers the PAM authentication profile with Debian's `pam-auth-update`.
 
-### Option B: Build and Install from Source
+### Option B: Build and Install from Source (Debian/Ubuntu, RHEL/Fedora, Arch Linux)
 
 ```bash
-# 1. Build and install to /usr
+# 1. Install build dependencies for your distro:
+# Debian / Ubuntu:
+sudo apt install build-essential libopencv-dev libpam0g-dev
+# RHEL / Fedora:
+sudo dnf install gcc-c++ make opencv-devel pam-devel
+# Arch Linux:
+sudo pacman -S --needed base-devel opencv pam
+
+# 2. Build and install binaries, PAM module, ONNX models, and systemd service
 make
 sudo make install
 
-# Or build your own Debian package from source:
-make deb
-sudo apt install ./target/linux-hello_*_amd64.deb
-
-# 2. Start the daemon service
+# 3. Start and enable the daemon service
 sudo systemctl daemon-reload
 sudo systemctl enable --now linux-hello.service
-
-# 3. Enable PAM authentication
-sudo linux-hello enable
-# Or: sudo pam-auth-update --package
 ```
 
-To disable PAM authentication at any time:
-```bash
-sudo linux-hello disable
-```
+#### Enabling PAM Authentication:
+- **Debian / Ubuntu** (via `pam-auth-update`):
+  ```bash
+  sudo linux-hello enable
+  # Or to disable at any time:
+  sudo linux-hello disable
+  ```
+- **RHEL / Fedora & Arch Linux**:
+  Add the following line near the top of `/etc/pam.d/sudo` (or `/etc/pam.d/system-auth` / `/etc/pam.d/system-local-login`):
+  ```text
+  auth    sufficient    pam_linux_hello.so
+  ```
+
 
 ---
 

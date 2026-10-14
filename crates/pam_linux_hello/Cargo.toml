@@ -1,13 +1,15 @@
 [package]
 name = "pam_linux_hello"
-version = "0.1.0"
-edition = "2021"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
 
 [lib]
 name = "pam_linux_hello"
 crate-type = ["cdylib"]
 
 [dependencies]
-libc = "0.2"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+libc.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+

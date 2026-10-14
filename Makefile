@@ -16,16 +16,39 @@ endif
 
 all: build
 
-build:
+check-deps:
+	@command -v $(CARGO) >/dev/null 2>&1 || { \
+		echo "Error: '$(CARGO)' not found. Install Rust toolchain via https://rustup.rs/"; \
+		exit 1; \
+	}
+	@command -v c++ >/dev/null 2>&1 || { \
+		echo "Error: C++ compiler ('c++') not found."; \
+		echo "  Debian/Ubuntu: sudo apt install build-essential"; \
+		echo "  RHEL/Fedora:   sudo dnf install gcc-c++ make"; \
+		echo "  Arch Linux:    sudo pacman -S base-devel"; \
+		exit 1; \
+	}
+	@if [ ! -f /usr/include/opencv4/opencv2/opencv.hpp ] && ! (command -v pkg-config >/dev/null 2>&1 && pkg-config --exists opencv4); then \
+		echo "Error: OpenCV 4 development headers not found (/usr/include/opencv4/opencv2/opencv.hpp)."; \
+		echo "  Debian/Ubuntu: sudo apt install libopencv-dev"; \
+		echo "  RHEL/Fedora:   sudo dnf install opencv-devel"; \
+		echo "  Arch Linux:    sudo pacman -S opencv"; \
+		exit 1; \
+	fi
+
+build: check-deps
 	$(CARGO) build $(CARGO_FLAGS)
 
-test:
+test: check-deps
 	$(CARGO) test $(CARGO_FLAGS)
+
+clean:
+	$(CARGO) clean
 
 install:
 	@if [ ! -f target/release/linux-hello ] || [ ! -f target/release/linux-hellod ] || [ ! -f target/release/libpam_linux_hello.so ]; then \
 		echo "Release binaries not found. Building with $(CARGO)..."; \
-		$(CARGO) build $(CARGO_FLAGS); \
+		$(MAKE) build; \
 	fi
 	# Install binaries
 	install -d $(DESTDIR)$(PREFIX)/bin
@@ -35,10 +58,14 @@ install:
 	# Install PAM module
 	install -d $(DESTDIR)$(PREFIX)/lib/security
 	install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)$(PREFIX)/lib/security/pam_linux_hello.so
-	# Also link to multiarch location if present
+	# Also install to Debian multiarch or RHEL/Fedora lib64 PAM locations if present on host
 	@if [ -d /lib/x86_64-linux-gnu/security ]; then \
 		install -d $(DESTDIR)/lib/x86_64-linux-gnu/security; \
 		install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)/lib/x86_64-linux-gnu/security/pam_linux_hello.so; \
+	fi
+	@if [ -d /usr/lib64/security ]; then \
+		install -d $(DESTDIR)/usr/lib64/security; \
+		install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)/usr/lib64/security/pam_linux_hello.so; \
 	fi
 
 	# Install ONNX models
@@ -75,6 +102,7 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/linux-hellod
 	rm -f $(DESTDIR)$(PREFIX)/lib/security/pam_linux_hello.so
 	rm -f $(DESTDIR)/lib/x86_64-linux-gnu/security/pam_linux_hello.so
+	rm -f $(DESTDIR)/usr/lib64/security/pam_linux_hello.so
 	rm -rf $(DESTDIR)$(PREFIX)/share/linux-hello
 	rm -f $(DESTDIR)/lib/systemd/system/linux-hello.service
 	rm -f $(DESTDIR)/etc/systemd/system/linux-hello.service
@@ -83,4 +111,6 @@ uninstall:
 		pam-auth-update --package; \
 	fi
 
-.PHONY: all build test install uninstall deb
+
+.PHONY: all check-deps build test clean install uninstall deb
+

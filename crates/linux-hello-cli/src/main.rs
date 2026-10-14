@@ -171,11 +171,12 @@ fn resolve_storage_dir(configured: Option<&Path>) -> PathBuf {
     if let Some(path) = configured {
         return path.to_path_buf();
     }
-    let is_root = unsafe { libc::geteuid() == 0 };
+    let is_root = nix::unistd::Uid::effective().is_root();
     let sys_dir = Path::new("/var/lib/linux-hello/models");
     if is_root {
         return sys_dir.to_path_buf();
     }
+
     if sys_dir.exists() && sys_dir.read_dir().is_ok() {
         return sys_dir.to_path_buf();
     }
