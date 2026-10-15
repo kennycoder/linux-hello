@@ -17,6 +17,116 @@ Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrare
 
 ---
 
+## System Installation & PAM Setup
+
+### Option A: Install from Debian Package (.deb) — Debian / Ubuntu
+
+Download the latest `.deb` package from [GitHub Releases](https://github.com/kennycoder/linux-hello/releases) or build it locally with `make deb`:
+
+```bash
+# Install package (apt automatically resolves all runtime dependencies, including OpenCV runtime libs)
+sudo apt install ./linux-hello_*_amd64.deb
+```
+
+### Option B: Build and Install from Source (Debian/Ubuntu, RHEL/Fedora, Arch Linux)
+
+```bash
+# 1. Install build dependencies for your distro:
+# Debian / Ubuntu:
+sudo apt install build-essential libopencv-dev libpam0g-dev
+# RHEL / Fedora:
+sudo dnf install gcc-c++ make opencv-devel pam-devel
+# Arch Linux:
+sudo pacman -S --needed base-devel opencv pam
+
+# 2. Build and install binaries, PAM module, ONNX models, and systemd service
+make
+sudo make install
+
+# 3. Start and enable the daemon service
+sudo systemctl daemon-reload
+sudo systemctl enable --now linux-hello.service
+```
+
+### Enabling PAM Authentication
+
+#### 1. System-Wide PAM Setup
+- **Debian / Ubuntu** (via `pam-auth-update`):
+  ```bash
+  sudo linux-hello enable
+  # Or to disable at any time:
+  sudo linux-hello disable
+  ```
+- **RHEL / Fedora & Arch Linux**:
+  Add the following line near the top of `/etc/pam.d/sudo` (or `/etc/pam.d/system-auth` / `/etc/pam.d/system-local-login`):
+  ```text
+  auth    sufficient    pam_linux_hello.so
+  ```
+
+#### 2. Sudo-Only Setup (Custom PAM Service + `/etc/sudoers.d/`)
+
+If you only want facial authentication for `sudo` (leaving login, display managers, lock screens, and system-wide `/etc/pam.d/common-auth` untouched, or avoiding conflicts with system-managed PAM files):
+
+1. **(Debian / Ubuntu `.deb` users)** If `pam-auth-update` enabled Linux-Hello system-wide, disable the global profile first:
+   ```bash
+   sudo linux-hello disable
+   ```
+
+2. **Create a custom PAM service (`/etc/pam.d/sudo-hello`)**:
+   Copy your existing `/etc/pam.d/sudo` configuration:
+   ```bash
+   sudo cp /etc/pam.d/sudo /etc/pam.d/sudo-hello
+   ```
+   If your `/etc/pam.d/sudo-hello` delegates to `@include common-auth` (or `@include system-auth`), you can add `pam_linux_hello.so` as `sufficient` at the very top:
+   ```text
+   #%PAM-1.0
+   auth    sufficient    pam_linux_hello.so
+
+   @include common-auth
+   @include common-account
+   @include common-session-noninteractive
+   ```
+
+3. **Using `success=N` in custom `custom-auth` / `common-auth` configs**:
+   If `/etc/pam.d/sudo-hello` includes a dedicated custom auth file (e.g. `@include custom-auth` or `@include common-auth-hello`) or inlines a Debian-style primary auth block that uses `[success=N default=ignore]` jump rules instead of `sufficient`, make sure `success=N` is set accurately:
+   ```text
+   # Primary authentication block (e.g. /etc/pam.d/custom-auth)
+   auth    [success=2 default=ignore]      pam_linux_hello.so
+   auth    [success=1 default=ignore]      pam_unix.so nullok
+   # Fallback if no module succeeds
+   auth    requisite                       pam_deny.so
+   # Prime the stack with a positive return value
+   auth    required                        pam_permit.so
+   ```
+   - **How `success=N` works**: `N` is the exact number of subsequent `auth` rules to skip on a match so that control jumps over all remaining primary `auth` modules **and** `auth requisite pam_deny.so`, landing directly on `auth required pam_permit.so`.
+   - **Calculating `N`**: Set `N` to `1` greater than the `success=M` value of the `auth` line immediately below it (`N = M + 1`), or count the number of `auth` lines between `pam_linux_hello.so` and `pam_permit.so`. For example, if `pam_unix.so` (`success=1`) is the only module below it, use `success=2`. If there is another module in between (with `success=2`), use `success=3`.
+   - **Important**: If `N` is too small (e.g. `success=1` when `pam_unix.so` is below it), a successful face match will only skip `pam_unix.so` and land directly on `auth requisite pam_deny.so`, causing authentication to fail even when your face matches.
+
+4. **Point `sudo` to the custom PAM service via `/etc/sudoers.d/`**:
+   Create a drop-in configuration in `/etc/sudoers.d/` (using `visudo` to validate syntax and set `0440` permissions):
+   ```bash
+   sudo visudo -f /etc/sudoers.d/custom_etc_sudoers_d
+   ```
+   Add the following line:
+   ```text
+   Defaults pam_service="sudo-hello"
+   ```
+
+---
+
+## Verification & Safe Testing
+
+1. Make sure you have enrolled your face first (`sudo linux-hello add`).
+2. Open a separate terminal window and keep a root shell open (`sudo -s`) as a safeguard.
+3. In another terminal, run:
+   ```bash
+   sudo whoami
+   ```
+   The camera will illuminate and authenticate your face without requiring a password.
+4. **Password Fallback**: Cover the IR camera with your hand or a card and run `sudo whoami`. The system will seamlessly fall back to the standard password prompt without hanging.
+
+---
+
 ## Features
 
 - **Dedicated IR Camera Support**:
@@ -163,14 +273,6 @@ Position yourself in front of the IR camera and run:
 ```bash
 sudo ./target/release/linux-hello add
 ```
-This launches the interactive 5-pose enrollment state machine:
-1. **Center**: `Look straight into the IR camera`
-2. **Turn Left**: `Turn your head slightly to your LEFT (15-20°)`
-3. **Turn Right**: `Turn your head slightly to your RIGHT (15-20°)`
-4. **Tilt Up**: `Tilt your head slightly UP (10-15°)`
-5. **Tilt Down**: `Tilt your head slightly DOWN (10-15°)`
-
-The CLI displays real-time visual feedback and a 3-frame steady hold meter (`[●○○]` $\to$ `[●●○]` $\to$ `[●●●]`). Once verified, it captures and embeds the angle.
 
 *(Optional flags)*:
 - `-r`, `--replace`: Clear any existing models for the user before enrolling.
@@ -253,67 +355,3 @@ Authenticate directly against camera hardware and local profile storage, complet
 ./target/release/linux-hello test --direct
 ```
 
----
-
-## System Installation & PAM Setup
-
-### Option A: Install from Debian Package (.deb) — Debian / Ubuntu
-
-Download the latest `.deb` package from [GitHub Releases](https://github.com/kennycoder/linux-hello/releases) or build it locally with `make deb`:
-
-```bash
-# Install package (apt automatically resolves all runtime dependencies, including OpenCV runtime libs)
-sudo apt install ./linux-hello_*_amd64.deb
-```
-
-The Debian package automatically:
-- Installs `linux-hello`, `linux-hellod`, and `pam_linux_hello.so`.
-- Installs the bundled YuNet and SFace ONNX models (`models/*.onnx`) into `/usr/share/linux-hello/models` (no network download required during install).
-- Enables and starts `linux-hello.service` in systemd.
-- Registers the PAM authentication profile with Debian's `pam-auth-update`.
-
-### Option B: Build and Install from Source (Debian/Ubuntu, RHEL/Fedora, Arch Linux)
-
-```bash
-# 1. Install build dependencies for your distro:
-# Debian / Ubuntu:
-sudo apt install build-essential libopencv-dev libpam0g-dev
-# RHEL / Fedora:
-sudo dnf install gcc-c++ make opencv-devel pam-devel
-# Arch Linux:
-sudo pacman -S --needed base-devel opencv pam
-
-# 2. Build and install binaries, PAM module, ONNX models, and systemd service
-make
-sudo make install
-
-# 3. Start and enable the daemon service
-sudo systemctl daemon-reload
-sudo systemctl enable --now linux-hello.service
-```
-
-#### Enabling PAM Authentication:
-- **Debian / Ubuntu** (via `pam-auth-update`):
-  ```bash
-  sudo linux-hello enable
-  # Or to disable at any time:
-  sudo linux-hello disable
-  ```
-- **RHEL / Fedora & Arch Linux**:
-  Add the following line near the top of `/etc/pam.d/sudo` (or `/etc/pam.d/system-auth` / `/etc/pam.d/system-local-login`):
-  ```text
-  auth    sufficient    pam_linux_hello.so
-  ```
-
-
----
-
-## Verification & Safe Testing
-
-1. Open a separate terminal window and keep a root shell open (`sudo -s`) as a safeguard.
-2. In another terminal, run:
-   ```bash
-   sudo whoami
-   ```
-   The camera will illuminate and authenticate your face without requiring a password.
-3. **Password Fallback**: Cover the IR camera with your hand or a card and run `sudo whoami`. The system will seamlessly fall back to the standard password prompt without hanging.
