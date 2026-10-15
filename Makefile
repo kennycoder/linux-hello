@@ -46,7 +46,7 @@ clean:
 	$(CARGO) clean
 
 install:
-	@if [ ! -f target/release/linux-hello ] || [ ! -f target/release/linux-hellod ] || [ ! -f target/release/libpam_linux_hello.so ]; then \
+	@if [ ! -f target/release/linux-hello ] || [ ! -f target/release/linux-hellod ] || [ ! -f target/release/linux-hello-gui ] || [ ! -f target/release/libpam_linux_hello.so ]; then \
 		echo "Release binaries not found. Building with $(CARGO)..."; \
 		$(MAKE) build; \
 	fi
@@ -54,6 +54,15 @@ install:
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 target/release/linux-hello $(DESTDIR)$(PREFIX)/bin/linux-hello
 	install -m 755 target/release/linux-hellod $(DESTDIR)$(PREFIX)/bin/linux-hellod
+	install -m 755 target/release/linux-hello-gui $(DESTDIR)$(PREFIX)/bin/linux-hello-gui
+
+	# Install desktop launcher, icon, and Polkit policy
+	install -d $(DESTDIR)$(PREFIX)/share/applications
+	install -m 644 debian/linux-hello-gui.desktop $(DESTDIR)$(PREFIX)/share/applications/linux-hello-gui.desktop
+	install -d $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps
+	install -m 644 assets/linux-hello-logo-cropped.svg $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/linux-hello.svg
+	install -d $(DESTDIR)$(PREFIX)/share/polkit-1/actions
+	install -m 644 debian/org.linuxhello.pkexec.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.linuxhello.pkexec.policy
 
 	# Install PAM module
 	install -d $(DESTDIR)$(PREFIX)/lib/security
@@ -100,6 +109,10 @@ deb: build
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/linux-hello
 	rm -f $(DESTDIR)$(PREFIX)/bin/linux-hellod
+	rm -f $(DESTDIR)$(PREFIX)/bin/linux-hello-gui
+	rm -f $(DESTDIR)$(PREFIX)/share/applications/linux-hello-gui.desktop
+	rm -f $(DESTDIR)$(PREFIX)/share/icons/hicolor/scalable/apps/linux-hello.svg
+	rm -f $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.linuxhello.pkexec.policy
 	rm -f $(DESTDIR)$(PREFIX)/lib/security/pam_linux_hello.so
 	rm -f $(DESTDIR)/lib/x86_64-linux-gnu/security/pam_linux_hello.so
 	rm -f $(DESTDIR)/usr/lib64/security/pam_linux_hello.so

@@ -11,6 +11,24 @@ pub enum StorageError {
     Io(#[from] std::io::Error),
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
+    #[error("Invalid username '{0}': must contain only alphanumeric, '_', '-', or '.' characters")]
+    InvalidUsername(String),
+}
+
+/// Validates that a username is safe to use as a filename stem and cannot cause path traversal.
+pub fn validate_username(username: &str) -> Result<(), StorageError> {
+    if username.is_empty()
+        || username.len() > 64
+        || username == "."
+        || username == ".."
+        || username.contains("..")
+        || !username
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+    {
+        return Err(StorageError::InvalidUsername(username.to_string()));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,10 +57,7 @@ impl UserProfile {
     pub fn add_embedding(&mut self, embedding: Vec<f32>, label: String) {
         self.enrolled_embeddings.push(embedding);
         self.labels.push(label);
-        self.updated_at = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs();
+        self.touch();
     }
 
     pub fn upsert_embedding(&mut self, embedding: Vec<f32>, label: String) {
@@ -52,6 +67,24 @@ impl UserProfile {
             self.enrolled_embeddings.push(embedding);
             self.labels.push(label);
         }
+        self.touch();
+    }
+
+    /// Removes an enrolled template by label. Returns true if found and removed.
+    pub fn remove_label(&mut self, label: &str) -> bool {
+        if let Some(pos) = self.labels.iter().position(|l| l == label) {
+            self.labels.remove(pos);
+            if pos < self.enrolled_embeddings.len() {
+                self.enrolled_embeddings.remove(pos);
+            }
+            self.touch();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn touch(&mut self) {
         self.updated_at = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
@@ -75,11 +108,26 @@ impl Storage {
         Ok(Storage { base_dir })
     }
 
+    pub fn base_dir(&self) -> &Path {
+        &self.base_dir
+    }
+
     pub fn user_path(&self, username: &str) -> PathBuf {
-        self.base_dir.join(format!("{}.json", username))
+        // Fallback to sanitized stem if called directly without Result
+        let safe_name: String = username
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '_' || *c == '-' || *c == '.')
+            .collect();
+        let stem = if safe_name.is_empty() || safe_name == "." || safe_name == ".." {
+            "invalid_user"
+        } else {
+            &safe_name
+        };
+        self.base_dir.join(format!("{}.json", stem))
     }
 
     pub fn save_profile(&self, profile: &UserProfile) -> Result<(), StorageError> {
+        validate_username(&profile.username)?;
         if !self.base_dir.exists() {
             fs::create_dir_all(&self.base_dir)?;
             let _ = fs::set_permissions(&self.base_dir, fs::Permissions::from_mode(0o755));
@@ -96,6 +144,7 @@ impl Storage {
     }
 
     pub fn load_profile(&self, username: &str) -> Result<Option<UserProfile>, StorageError> {
+        validate_username(username)?;
         let path = self.user_path(username);
         let content = match fs::read_to_string(&path) {
             Ok(c) => c,
@@ -118,7 +167,9 @@ impl Storage {
             let path = entry.path();
             if path.extension().map_or(false, |ext| ext == "json") {
                 if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    users.push(stem.to_string());
+                    if validate_username(stem).is_ok() {
+                        users.push(stem.to_string());
+                    }
                 }
             }
         }
@@ -128,6 +179,7 @@ impl Storage {
     }
 
     pub fn delete_user(&self, username: &str) -> Result<bool, StorageError> {
+        validate_username(username)?;
         let path = self.user_path(username);
         match fs::remove_file(path) {
             Ok(_) => Ok(true),

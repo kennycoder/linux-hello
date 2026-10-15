@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Linux-Hello</vendor>
+  <vendor_url>https://github.com/kennycoder/linux-hello</vendor_url>
+  <icon_name>linux-hello</icon_name>
+
+  <action id="org.linuxhello.pkexec.manage">
+    <description>Manage Linux-Hello biometric profiles and PAM authentication</description>
+    <message>Authentication is required to update Linux-Hello biometric face profiles or PAM settings</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin_keep</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/linux-hello</annotate>
+    <annotate key="org.freedesktop.policykit.exec.allow_gui">true</annotate>
+  </action>
+</policyconfig>

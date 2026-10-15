@@ -27,9 +27,9 @@ pub struct Face {
 }
 
 impl Face {
-    /// Returns approximate (yaw, pitch) pose ratios:
-    /// yaw: ~0.50 center, >0.57 turned left (user's left), <0.43 turned right (user's right)
-    /// pitch: ~0.50 center, <0.43 tilted up, >0.57 tilted down
+    /// Returns approximate (yaw, pitch) pose ratios calibrated for IR facial geometry:
+    /// yaw: ~0.50 center, >=0.57 turned left (user's left), <=0.39 turned right (user's right)
+    /// pitch: ~0.50 center, <=0.44 tilted up, >=0.565 tilted down
     pub fn estimated_pose_ratios(&self) -> (f32, f32) {
         let right_eye = self.landmarks[0];
         let left_eye = self.landmarks[1];
@@ -37,11 +37,13 @@ impl Face {
         let right_mouth = self.landmarks[3];
         let left_mouth = self.landmarks[4];
 
-        let min_eye_x = right_eye.0.min(left_eye.0);
-        let max_eye_x = right_eye.0.max(left_eye.0);
-        let eye_dist = max_eye_x - min_eye_x;
-        let yaw = if eye_dist > 1.0 {
-            (nose.0 - min_eye_x) / eye_dist
+        // Project nose position onto the 2D inter-ocular axis (right_eye -> left_eye)
+        // so that natural head roll (tilt) does not skew horizontal yaw estimation.
+        let eye_dx = left_eye.0 - right_eye.0;
+        let eye_dy = left_eye.1 - right_eye.1;
+        let eye_len_sq = eye_dx * eye_dx + eye_dy * eye_dy;
+        let yaw = if eye_len_sq > 4.0 {
+            ((nose.0 - right_eye.0) * eye_dx + (nose.1 - right_eye.1) * eye_dy) / eye_len_sq
         } else {
             0.5
         };
@@ -49,13 +51,68 @@ impl Face {
         let eye_mid_y = (right_eye.1 + left_eye.1) / 2.0;
         let mouth_mid_y = (right_mouth.1 + left_mouth.1) / 2.0;
         let vert_dist = (mouth_mid_y - eye_mid_y).abs();
-        let pitch = if vert_dist > 1.0 {
+        let raw_pitch = if vert_dist > 1.0 {
             (nose.1 - eye_mid_y) / vert_dist
         } else {
-            0.5
+            0.56
         };
+        // Anatomically, the nose tip in YuNet IR detections sits ~56% of the way from the
+        // eye line to the mouth line when looking straight ahead. Re-centering 0.56 -> 0.50
+        // and scaling vertical sensitivity by 1.65x gives symmetric, responsive up/down pitch.
+        let pitch = 0.50 + (raw_pitch - 0.56) * 1.65;
 
         (yaw, pitch)
+    }
+
+    /// Classifies the current face orientation into one of the 5 canonical poses:
+    /// returns `(pose_id, friendly_description)`.
+    pub fn classify_pose(
+        &self,
+        center_baseline: Option<(f32, f32)>,
+    ) -> (&'static str, &'static str) {
+        let (yaw, pitch) = self.estimated_pose_ratios();
+        let min_left_yaw = center_baseline
+            .map(|(cy, _)| (cy + 0.09).clamp(0.55, 0.62))
+            .unwrap_or(0.57);
+        let max_right_yaw = center_baseline
+            .map(|(cy, _)| (cy - 0.09).clamp(0.34, 0.41))
+            .unwrap_or(0.39);
+        let max_up_pitch = center_baseline
+            .map(|(_, cp)| (cp - 0.07).clamp(0.38, 0.45))
+            .unwrap_or(0.44);
+        let min_down_pitch = center_baseline
+            .map(|(_, cp)| (cp + 0.05).clamp(0.55, 0.59))
+            .unwrap_or(0.565);
+
+        let yaw_excess = if yaw >= min_left_yaw {
+            yaw - min_left_yaw + 0.01
+        } else if yaw <= max_right_yaw {
+            max_right_yaw - yaw + 0.01
+        } else {
+            0.0
+        };
+
+        let pitch_excess = if pitch <= max_up_pitch {
+            max_up_pitch - pitch + 0.01
+        } else if pitch >= min_down_pitch {
+            pitch - min_down_pitch + 0.01
+        } else {
+            0.0
+        };
+
+        if yaw_excess == 0.0 && pitch_excess == 0.0 {
+            ("center", "Facing Center")
+        } else if yaw_excess >= pitch_excess {
+            if yaw >= min_left_yaw {
+                ("look_left", "Turned Left")
+            } else {
+                ("look_right", "Turned Right")
+            }
+        } else if pitch <= max_up_pitch {
+            ("look_up", "Tilted Up")
+        } else {
+            ("look_down", "Tilted Down")
+        }
     }
 
     /// Verifies that detected face satisfies basic human anatomical geometry and high confidence,
@@ -127,45 +184,53 @@ impl Face {
         let (yaw, pitch) = self.estimated_pose_ratios();
         match target_pose {
             "center" => {
-                if yaw < 0.38 {
+                if yaw < 0.39 {
                     (false, "Turn slightly to your LEFT (towards center)")
-                } else if yaw > 0.62 {
+                } else if yaw > 0.57 {
                     (false, "Turn slightly to your RIGHT (towards center)")
-                } else if pitch < 0.40 {
+                } else if pitch < 0.44 {
                     (false, "Tilt head slightly DOWN (towards center)")
-                } else if pitch > 0.65 {
+                } else if pitch > 0.56 {
                     (false, "Tilt head slightly UP (towards center)")
                 } else {
                     (true, "Holding Center")
                 }
             }
             "look_left" => {
-                let rel_match = center_baseline.map_or(false, |(cy, _)| yaw >= cy + 0.04);
-                if yaw >= 0.54 || rel_match {
+                let min_yaw = center_baseline
+                    .map(|(cy, _)| (cy + 0.09).clamp(0.55, 0.62))
+                    .unwrap_or(0.57);
+                if yaw >= min_yaw {
                     (true, "Turned Left")
                 } else {
                     (false, "Turn slightly more to your LEFT")
                 }
             }
             "look_right" => {
-                let rel_match = center_baseline.map_or(false, |(cy, _)| yaw <= cy - 0.04);
-                if yaw <= 0.46 || rel_match {
+                let max_yaw = center_baseline
+                    .map(|(cy, _)| (cy - 0.09).clamp(0.34, 0.41))
+                    .unwrap_or(0.39);
+                if yaw <= max_yaw {
                     (true, "Turned Right")
                 } else {
                     (false, "Turn slightly more to your RIGHT")
                 }
             }
             "look_up" => {
-                let rel_match = center_baseline.map_or(false, |(_, cp)| pitch <= cp - 0.03);
-                if pitch <= 0.53 || rel_match {
+                let max_pitch = center_baseline
+                    .map(|(_, cp)| (cp - 0.07).clamp(0.38, 0.45))
+                    .unwrap_or(0.44);
+                if pitch <= max_pitch {
                     (true, "Tilted Up")
                 } else {
                     (false, "Tilt head slightly higher UP")
                 }
             }
             "look_down" => {
-                let rel_match = center_baseline.map_or(false, |(_, cp)| pitch >= cp + 0.03);
-                if pitch >= 0.55 || rel_match {
+                let min_pitch = center_baseline
+                    .map(|(_, cp)| (cp + 0.05).clamp(0.55, 0.59))
+                    .unwrap_or(0.565);
+                if pitch >= min_pitch {
                     (true, "Tilted Down")
                 } else {
                     (false, "Tilt head slightly further DOWN")
@@ -221,23 +286,41 @@ impl FaceEngine {
             // Open/visible eyes in IR exhibit a dark iris/pupil core (basin) surrounded
             // horizontally by brighter sclera/canthus and vertically by a brighter lower eyelid,
             // along with strong horizontal scanline variance across the aperture.
-            // When the head turns 15-25+ degrees left/right, the far eye is foreshortened and
-            // partially shadowed by the nose bridge while the near eye remains clearly visible.
+            // When the head turns 15-25+ degrees left/right or tilts down, one eye can be
+            // foreshortened by the nose bridge or upper eyelashes while the other remains clearly visible.
             let eye_dx = (landmarks[1].0 - landmarks[0].0).max(1.0);
             let yaw_ratio = ((landmarks[2].0 - landmarks[0].0) / eye_dx).clamp(0.0, 1.0);
             let yaw_dev = (yaw_ratio - 0.50).abs();
-            let turn_relax = (1.0 - (yaw_dev - 0.05).max(0.0) * 1.8).clamp(0.55, 1.0);
+
+            let eye_mid_y = (landmarks[0].1 + landmarks[1].1) / 2.0;
+            let mouth_mid_y = (landmarks[3].1 + landmarks[4].1) / 2.0;
+            let vert_dist = (mouth_mid_y - eye_mid_y).abs().max(1.0);
+            let pitch_ratio = ((landmarks[2].1 - eye_mid_y) / vert_dist).clamp(0.0, 1.0);
+            let down_dev = (pitch_ratio - 0.55).max(0.0);
+
+            let pose_dev = yaw_dev.max(down_dev);
+            let turn_relax = (1.0 - (pose_dev - 0.05).max(0.0) * 1.8).clamp(0.55, 1.0);
 
             let dist_scale = (eye_dist / 42.0).clamp(0.75, 1.0);
             let min_std = r_std.min(l_std);
             let max_std = r_std.max(l_std);
             let avg_std = (r_std + l_std) / 2.0;
             let min_range = r_range.min(l_range);
+            let max_range = r_range.max(l_range);
 
-            let eyes_visible = min_std >= 8.8 * dist_scale * turn_relax
+            let both_eyes_ok = min_std >= 8.8 * dist_scale * turn_relax
                 && max_std >= 11.2 * dist_scale
                 && avg_std >= 11.2 * dist_scale * turn_relax.sqrt()
                 && min_range >= 18.0 * dist_scale * turn_relax;
+
+            // During steeper downward tilt or side turn, upper eyelashes/nose bridge may shadow one eye
+            // while the dominant eye still shows strong open-iris contrast.
+            let tilted_dominant_eye_ok = pose_dev >= 0.07
+                && max_std >= 16.0 * dist_scale
+                && avg_std >= 9.2 * dist_scale
+                && max_range >= 26.0 * dist_scale;
+
+            let eyes_visible = both_eyes_ok || tilted_dominant_eye_ok;
 
             faces.push(Face {
                 bbox: (rf.x, rf.y, rf.width, rf.height),
@@ -283,13 +366,13 @@ impl FaceEngine {
         let ed = eye_dist.max(20.0);
         let rx = (0.20 * ed).round().max(4.0) as i32;
 
-        // 1. Eye aperture band: dy in [-0.07*ed .. +0.03*ed], dx in [-0.14*ed .. +0.14*ed].
+        // 1. Eye aperture band: dy in [-0.07*ed .. +0.05*ed], dx in [-0.14*ed .. +0.14*ed].
         // Wider horizontal span allows the dark iris to sit near the inner/outer eye corner
         // during 15-25° head turns, while same-column vertical comparison against the lower
         // eyelid band [+0.08*ed .. +0.16*ed] cancels out horizontal nose-bridge shading.
         let irx = (0.14 * ed).round().max(3.0) as i32;
         let iry_top = (0.07 * ed).round().max(2.0) as i32;
-        let iry_bot = (0.03 * ed).round().max(1.0) as i32;
+        let iry_bot = (0.05 * ed).round().max(2.0) as i32;
         let l_top = (0.08 * ed).round().max(3.0) as i32;
         let l_bot = (0.16 * ed).round().max(6.0) as i32;
 
@@ -526,6 +609,66 @@ mod tests {
         down_face.landmarks[2] = (160.0, 195.0); // nose_y=195 -> pitch=55/70=0.78
         assert!(down_face.matches_target_pose("look_down").0);
         assert!(!down_face.matches_target_pose("center").0);
+    }
+
+    #[test]
+    fn test_calibrated_ir_pose_landmarks() {
+        let make_face = |landmarks: [(f32, f32); 5]| -> Face {
+            let mut f = sample_valid_face();
+            f.landmarks = landmarks;
+            f
+        };
+
+        // Ground-truth YuNet IR landmarks from real 5-pose calibration captures
+        let f_center = make_face([
+            (291.62, 149.92),
+            (354.07, 153.87),
+            (318.40, 189.17),
+            (293.10, 215.13),
+            (344.73, 219.01),
+        ]);
+        let f_left = make_face([
+            (331.86, 153.53),
+            (387.51, 153.32),
+            (372.42, 192.93),
+            (335.17, 219.43),
+            (382.42, 219.69),
+        ]);
+        let f_right = make_face([
+            (259.89, 149.37),
+            (317.86, 154.35),
+            (269.78, 188.43),
+            (260.12, 216.99),
+            (306.78, 221.70),
+        ]);
+        let f_up = make_face([
+            (285.84, 121.93),
+            (341.45, 120.30),
+            (312.22, 144.81),
+            (293.97, 171.38),
+            (342.01, 169.59),
+        ]);
+        let f_down = make_face([
+            (281.27, 188.46),
+            (346.58, 186.65),
+            (312.36, 229.22),
+            (291.73, 253.37),
+            (343.23, 252.78),
+        ]);
+
+        let baseline = Some(f_center.estimated_pose_ratios());
+
+        assert_eq!(f_center.classify_pose(None), ("center", "Facing Center"));
+        assert_eq!(f_left.classify_pose(None), ("look_left", "Turned Left"));
+        assert_eq!(f_right.classify_pose(None), ("look_right", "Turned Right"));
+        assert_eq!(f_up.classify_pose(None), ("look_up", "Tilted Up"));
+        assert_eq!(f_down.classify_pose(None), ("look_down", "Tilted Down"));
+
+        assert!(f_center.matches_target_pose_with_baseline("center", None).0);
+        assert!(f_left.matches_target_pose_with_baseline("look_left", baseline).0);
+        assert!(f_right.matches_target_pose_with_baseline("look_right", baseline).0);
+        assert!(f_up.matches_target_pose_with_baseline("look_up", baseline).0);
+        assert!(f_down.matches_target_pose_with_baseline("look_down", baseline).0);
     }
 }
 
