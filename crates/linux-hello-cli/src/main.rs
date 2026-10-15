@@ -119,10 +119,25 @@ enum Commands {
     /// List all enrolled users and their face models
     List,
 
-    /// Remove an enrolled user or model
+    /// Remove an enrolled user profile or a specific template label
     Remove {
         /// Username to remove
         username: String,
+
+        /// Optional specific template label to remove (e.g. 'glasses' or 'look_left')
+        #[arg(short, long)]
+        label: Option<String>,
+    },
+
+    /// Import and install a validated UserProfile JSON file into system storage (used by GUI via Polkit)
+    ImportProfile {
+        /// Target username
+        #[arg(short, long)]
+        user: String,
+
+        /// Path to source profile JSON file
+        #[arg(short, long)]
+        file: PathBuf,
     },
 
     /// Capture a snapshot from the IR camera and save to a PNG file
@@ -139,11 +154,22 @@ enum Commands {
     /// List all detected cameras and identify the IR camera
     Cameras,
 
-    /// Enable Linux-Hello in Debian PAM authentication
-    Enable,
+    /// Enable Linux-Hello in PAM authentication (system-wide or --sudo-only)
+    Enable {
+        /// Configure facial authentication only for sudo (/etc/pam.d/sudo-hello + /etc/sudoers.d/linux-hello)
+        #[arg(long)]
+        sudo_only: bool,
+    },
 
-    /// Disable Linux-Hello in Debian PAM authentication
-    Disable,
+    /// Disable Linux-Hello in PAM authentication (system-wide or --sudo-only)
+    Disable {
+        /// Remove only the sudo-only PAM configuration (/etc/pam.d/sudo-hello + /etc/sudoers.d/linux-hello)
+        #[arg(long)]
+        sudo_only: bool,
+    },
+
+    /// Launch the standalone Linux-Hello graphical settings & enrollment application
+    Gui,
 }
 
 fn get_current_username() -> String {
@@ -200,16 +226,33 @@ fn resolve_camera_device(device: Option<&Path>) -> Result<PathBuf, Box<dyn std::
 }
 
 fn describe_pose(yaw: f32, pitch: f32) -> &'static str {
-    if yaw > 0.62 {
-        "Turned Left"
-    } else if yaw < 0.38 {
-        "Turned Right"
-    } else if pitch < 0.40 {
-        "Tilted Up"
-    } else if pitch > 0.65 {
-        "Tilted Down"
+    let yaw_excess = if yaw >= 0.57 {
+        yaw - 0.57 + 0.01
+    } else if yaw <= 0.39 {
+        0.39 - yaw + 0.01
     } else {
+        0.0
+    };
+    let pitch_excess = if pitch <= 0.44 {
+        0.44 - pitch + 0.01
+    } else if pitch >= 0.565 {
+        pitch - 0.565 + 0.01
+    } else {
+        0.0
+    };
+
+    if yaw_excess == 0.0 && pitch_excess == 0.0 {
         "Facing Center"
+    } else if yaw_excess >= pitch_excess {
+        if yaw >= 0.57 {
+            "Turned Left"
+        } else {
+            "Turned Right"
+        }
+    } else if pitch <= 0.44 {
+        "Tilted Up"
+    } else {
+        "Tilted Down"
     }
 }
 
@@ -358,13 +401,75 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        Commands::Remove { username } => {
+        Commands::Remove { username, label } => {
             let storage = Storage::new(&storage_dir)?;
-            if storage.delete_user(&username)? {
+            if let Some(lbl) = label {
+                match storage.load_profile(&username)? {
+                    Some(mut profile) => {
+                        if profile.remove_label(&lbl) {
+                            if profile.enrolled_embeddings.is_empty() {
+                                storage.delete_user(&username)?;
+                                println!(
+                                    "Removed last template '{}' and deleted empty profile for user '{}'.",
+                                    lbl, username
+                                );
+                            } else {
+                                storage.save_profile(&profile)?;
+                                println!(
+                                    "Successfully removed template '{}' from user '{}' ({} remaining).",
+                                    lbl,
+                                    username,
+                                    profile.enrolled_embeddings.len()
+                                );
+                            }
+                        } else {
+                            println!("Template label '{}' not found for user '{}'.", lbl, username);
+                        }
+                    }
+                    None => {
+                        println!("User '{}' was not enrolled.", username);
+                    }
+                }
+            } else if storage.delete_user(&username)? {
                 println!("Successfully removed biometric profile for user '{}'", username);
             } else {
                 println!("User '{}' was not enrolled.", username);
             }
+        }
+
+        Commands::ImportProfile { user, file } => {
+            linux_hello_core::validate_username(&user)?;
+            let content = fs::read_to_string(&file)
+                .map_err(|e| format!("Failed to read profile file {:?}: {}", file, e))?;
+            let profile: UserProfile = serde_json::from_str(&content)
+                .map_err(|e| format!("Invalid profile JSON in {:?}: {}", file, e))?;
+            if profile.username != user {
+                return Err(format!(
+                    "Profile username '{}' does not match target '--user {}'",
+                    profile.username, user
+                )
+                .into());
+            }
+            if profile.enrolled_embeddings.len() != profile.labels.len() {
+                return Err("Profile embeddings count does not match labels count".into());
+            }
+            for emb in &profile.enrolled_embeddings {
+                if emb.len() != 128 {
+                    return Err(format!(
+                        "Invalid embedding dimension {} (expected 128)",
+                        emb.len()
+                    )
+                    .into());
+                }
+            }
+            let storage = Storage::new(&storage_dir)?;
+            storage.save_profile(&profile)?;
+            println!(
+                "Successfully imported profile for '{}' ({} templates) to {:?}",
+                user,
+                profile.enrolled_embeddings.len(),
+                storage.user_path(&user)
+            );
         }
 
         Commands::Add { label, user, replace, device } => {
@@ -1135,53 +1240,120 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("=======================================================\n");
         }
 
-        Commands::Enable => {
-            println!("Configuring Debian PAM integration for Linux-Hello...");
-            let pam_config = r#"Name: Linux-Hello face authentication
+        Commands::Enable { sudo_only } => {
+            if sudo_only {
+                println!("Configuring Sudo-Only PAM integration for Linux-Hello...");
+                let base_sudo_pam = fs::read_to_string("/etc/pam.d/sudo").unwrap_or_else(|_| {
+                    "#%PAM-1.0\n@include common-auth\n@include common-account\n@include common-session-noninteractive\n".to_string()
+                });
+                let sudo_hello_content = if base_sudo_pam.contains("pam_linux_hello.so") {
+                    base_sudo_pam
+                } else if let Some(rest) = base_sudo_pam.strip_prefix("#%PAM-1.0\n") {
+                    format!("#%PAM-1.0\nauth    sufficient    pam_linux_hello.so\n{}", rest)
+                } else {
+                    format!("#%PAM-1.0\nauth    sufficient    pam_linux_hello.so\n{}", base_sudo_pam)
+                };
+
+                let pam_target = "/etc/pam.d/sudo-hello";
+                fs::write(pam_target, sudo_hello_content)
+                    .map_err(|e| format!("Failed to write {}: {} (run with sudo/pkexec)", pam_target, e))?;
+
+                let sudoers_target = "/etc/sudoers.d/linux-hello";
+                fs::write(sudoers_target, "Defaults pam_service=\"sudo-hello\"\n")
+                    .map_err(|e| format!("Failed to write {}: {} (run with sudo/pkexec)", sudoers_target, e))?;
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(sudoers_target, fs::Permissions::from_mode(0o440));
+
+                println!("[SUCCESS] Sudo-Only facial authentication enabled ({} + {}).", pam_target, sudoers_target);
+            } else {
+                println!("Configuring system-wide Debian PAM integration for Linux-Hello...");
+                let pam_config = r#"Name: Linux-Hello face authentication
 Default: yes
 Priority: 260
 Auth-Type: Primary
 Auth:
 	[success=end default=ignore] pam_linux_hello.so
 "#;
-            let config_path = "/usr/share/pam-configs/linux-hello";
-            println!("Writing PAM profile to {}...", config_path);
-            match fs::write(config_path, pam_config) {
-                Ok(_) => {
-                    println!("Running pam-auth-update to enable Linux-Hello across sudo and login...");
-                    let status = Command::new("pam-auth-update")
-                        .arg("--package")
-                        .status()?;
-                    if status.success() {
-                        println!("\n[SUCCESS] Linux-Hello is now enabled for system authentication!");
-                    } else {
-                        println!("\n[WARNING] pam-auth-update exited with status: {}", status);
+                let config_path = "/usr/share/pam-configs/linux-hello";
+                println!("Writing PAM profile to {}...", config_path);
+                match fs::write(config_path, pam_config) {
+                    Ok(_) => {
+                        println!("Running pam-auth-update to enable Linux-Hello across sudo and login...");
+                        let status = Command::new("pam-auth-update")
+                            .arg("--package")
+                            .status()?;
+                        if status.success() {
+                            println!("\n[SUCCESS] Linux-Hello is now enabled for system authentication!");
+                        } else {
+                            println!("\n[WARNING] pam-auth-update exited with status: {}", status);
+                        }
                     }
-                }
-                Err(e) => {
-                    println!("\n[ERROR] Failed to write {}: {}. Run with sudo.", config_path, e);
+                    Err(e) => {
+                        eprintln!("\n[ERROR] Failed to write {}: {}. Run with sudo.", config_path, e);
+                        return Err(e.into());
+                    }
                 }
             }
         }
 
-        Commands::Disable => {
-            let config_path = "/usr/share/pam-configs/linux-hello";
-            if Path::new(config_path).exists() {
-                println!("Removing {}...", config_path);
-                match fs::remove_file(config_path) {
-                    Ok(_) => {
-                        println!("Running pam-auth-update to apply changes...");
-                        let _ = Command::new("pam-auth-update")
-                            .arg("--package")
-                            .status();
-                        println!("\n[SUCCESS] Linux-Hello has been disabled.");
-                    }
-                    Err(e) => {
-                        println!("\n[ERROR] Failed to remove {}: {}. Run with sudo.", config_path, e);
-                    }
+        Commands::Disable { sudo_only } => {
+            if sudo_only {
+                let sudoers_target = "/etc/sudoers.d/linux-hello";
+                let pam_target = "/etc/pam.d/sudo-hello";
+                let mut removed = false;
+                if Path::new(sudoers_target).exists() {
+                    fs::remove_file(sudoers_target)
+                        .map_err(|e| format!("Failed to remove {}: {}", sudoers_target, e))?;
+                    removed = true;
+                }
+                if Path::new(pam_target).exists() {
+                    fs::remove_file(pam_target)
+                        .map_err(|e| format!("Failed to remove {}: {}", pam_target, e))?;
+                    removed = true;
+                }
+                if removed {
+                    println!("[SUCCESS] Sudo-Only Linux-Hello configuration has been disabled.");
+                } else {
+                    println!("Sudo-Only Linux-Hello configuration was not installed.");
                 }
             } else {
-                println!("Linux-Hello PAM configuration is not currently installed.");
+                let config_path = "/usr/share/pam-configs/linux-hello";
+                if Path::new(config_path).exists() {
+                    println!("Removing {}...", config_path);
+                    match fs::remove_file(config_path) {
+                        Ok(_) => {
+                            println!("Running pam-auth-update to apply changes...");
+                            let _ = Command::new("pam-auth-update")
+                                .arg("--package")
+                                .status();
+                            println!("\n[SUCCESS] Linux-Hello system-wide PAM has been disabled.");
+                        }
+                        Err(e) => {
+                            eprintln!("\n[ERROR] Failed to remove {}: {}. Run with sudo.", config_path, e);
+                            return Err(e.into());
+                        }
+                    }
+                } else {
+                    println!("Linux-Hello system-wide PAM configuration is not currently installed.");
+                }
+            }
+        }
+
+        Commands::Gui => {
+            let gui_bin = env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|dir| dir.join("linux-hello-gui")))
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| PathBuf::from("linux-hello-gui"));
+
+            let status = Command::new(&gui_bin).status().map_err(|e| {
+                format!(
+                    "Failed to launch {:?}: {}. Make sure 'linux-hello-gui' is built and installed.",
+                    gui_bin, e
+                )
+            })?;
+            if !status.success() {
+                return Err(format!("linux-hello-gui exited with status: {}", status).into());
             }
         }
     }

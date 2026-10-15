@@ -5,7 +5,7 @@ pub mod storage;
 
 pub use engine::{EngineError, Face, FaceEngine};
 pub use matcher::{verify_face, MatchResult, DEFAULT_COSINE_THRESHOLD};
-pub use storage::{Storage, StorageError, UserProfile};
+pub use storage::{validate_username, Storage, StorageError, UserProfile};
 
 #[cfg(test)]
 mod tests {
@@ -32,12 +32,18 @@ mod tests {
 
         let mut profile = UserProfile::new("alice".to_string());
         profile.add_embedding(vec![0.5; 128], "front".to_string());
+        profile.add_embedding(vec![0.3; 128], "glasses".to_string());
         storage.save_profile(&profile).unwrap();
 
-        let loaded = storage.load_profile("alice").unwrap().unwrap();
+        let mut loaded = storage.load_profile("alice").unwrap().unwrap();
         assert_eq!(loaded.username, "alice");
-        assert_eq!(loaded.enrolled_embeddings.len(), 1);
+        assert_eq!(loaded.enrolled_embeddings.len(), 2);
         assert_eq!(loaded.labels[0], "front");
+
+        assert!(loaded.remove_label("front"));
+        assert_eq!(loaded.enrolled_embeddings.len(), 1);
+        assert_eq!(loaded.labels[0], "glasses");
+        assert!(!loaded.remove_label("nonexistent"));
 
         // Verify file mode is 0644
         use std::os::unix::fs::PermissionsExt;
@@ -50,7 +56,17 @@ mod tests {
         assert!(storage.delete_user("alice").unwrap());
         assert!(storage.load_profile("alice").unwrap().is_none());
     }
-}
+
+    #[test]
+    fn test_username_validation_prevents_traversal() {
+        assert!(validate_username("alice_01").is_ok());
+        assert!(validate_username("john-doe.local").is_ok());
+        assert!(validate_username("../etc/passwd").is_err());
+        assert!(validate_username("..").is_err());
+        assert!(validate_username(".").is_err());
+        assert!(validate_username("root/evil").is_err());
+        assert!(validate_username("").is_err());
+    }
 
     #[test]
     fn test_face_engine_model_loading() {
@@ -64,3 +80,4 @@ mod tests {
             assert_eq!(faces.len(), 0);
         }
     }
+}

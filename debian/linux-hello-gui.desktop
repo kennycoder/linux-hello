@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Linux-Hello Face Authentication
+GenericName=Biometric Facial Authentication Settings
+Comment=Enroll your face, test IR camera recognition, and configure PAM facial authentication
+Exec=linux-hello-gui
+Icon=linux-hello
+Terminal=false
+StartupWMClass=linux-hello-gui
+Categories=Settings;Security;System;X-KDE-settings-security-privacy;
+X-KDE-System-Settings-Parent-Category=security-privacy
+X-KDE-Weight=80
+Keywords=face;biometric;hello;authentication;ir;camera;pam;login;sudo;unlock;security;
