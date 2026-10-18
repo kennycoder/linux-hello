@@ -1,4 +1,5 @@
 target/
 *.png
+!assets/linux-hello-gui.png
 *.raw
 .DS_Store
