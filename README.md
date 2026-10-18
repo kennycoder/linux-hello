@@ -13,7 +13,11 @@
 
 A high-performance, secure biometric facial authentication system for Linux, designed as a fast, native equivalent to **Windows Hello**.
 
-Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrared (IR) cameras, ONNX face detection & recognition models, and native Debian PAM integration.
+Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrared (IR) cameras, ONNX face detection & recognition models, a standalone cross-desktop GUI (`linux-hello-gui`), and native PAM integration.
+
+<p align="center">
+  <img src="assets/linux-hello-gui.png" alt="Linux-Hello Graphical Settings & Enrollment UI" width="840">
+</p>
 
 ---
 
@@ -71,6 +75,12 @@ If you only want facial authentication for `sudo` (leaving login, display manage
    ```bash
    sudo linux-hello disable
    ```
+   Or configure Sudo-Only mode automatically with a single command (or from the GUI):
+   ```bash
+   sudo linux-hello enable --sudo-only
+   # To remove Sudo-Only mode:
+   sudo linux-hello disable --sudo-only
+   ```
 
 2. **Create a custom PAM service (`/etc/pam.d/sudo-hello`)**:
    Copy your existing `/etc/pam.d/sudo` configuration:
@@ -87,22 +97,7 @@ If you only want facial authentication for `sudo` (leaving login, display manage
    @include common-session-noninteractive
    ```
 
-3. **Using `success=N` in custom `custom-auth` / `common-auth` configs**:
-   If `/etc/pam.d/sudo-hello` includes a dedicated custom auth file (e.g. `@include custom-auth` or `@include common-auth-hello`) or inlines a Debian-style primary auth block that uses `[success=N default=ignore]` jump rules instead of `sufficient`, make sure `success=N` is set accurately:
-   ```text
-   # Primary authentication block (e.g. /etc/pam.d/custom-auth)
-   auth    [success=2 default=ignore]      pam_linux_hello.so
-   auth    [success=1 default=ignore]      pam_unix.so nullok
-   # Fallback if no module succeeds
-   auth    requisite                       pam_deny.so
-   # Prime the stack with a positive return value
-   auth    required                        pam_permit.so
-   ```
-   - **How `success=N` works**: `N` is the exact number of subsequent `auth` rules to skip on a match so that control jumps over all remaining primary `auth` modules **and** `auth requisite pam_deny.so`, landing directly on `auth required pam_permit.so`.
-   - **Calculating `N`**: Set `N` to `1` greater than the `success=M` value of the `auth` line immediately below it (`N = M + 1`), or count the number of `auth` lines between `pam_linux_hello.so` and `pam_permit.so`. For example, if `pam_unix.so` (`success=1`) is the only module below it, use `success=2`. If there is another module in between (with `success=2`), use `success=3`.
-   - **Important**: If `N` is too small (e.g. `success=1` when `pam_unix.so` is below it), a successful face match will only skip `pam_unix.so` and land directly on `auth requisite pam_deny.so`, causing authentication to fail even when your face matches.
-
-4. **Point `sudo` to the custom PAM service via `/etc/sudoers.d/`**:
+3. **Point `sudo` to the custom PAM service via `/etc/sudoers.d/`**:
    Create a drop-in configuration in `/etc/sudoers.d/` (using `visudo` to validate syntax and set `0440` permissions):
    ```bash
    sudo visudo -f /etc/sudoers.d/custom_etc_sudoers_d
@@ -116,7 +111,7 @@ If you only want facial authentication for `sudo` (leaving login, display manage
 
 ## Verification & Safe Testing
 
-1. Make sure you have enrolled your face first (`sudo linux-hello add`).
+1. Make sure you have enrolled your face first (`linux-hello-gui` or `sudo linux-hello add`).
 2. Open a separate terminal window and keep a root shell open (`sudo -s`) as a safeguard.
 3. In another terminal, run:
    ```bash
@@ -129,6 +124,12 @@ If you only want facial authentication for `sudo` (leaving login, display manage
 
 ## Features
 
+- **Standalone Cross-Desktop GUI (`linux-hello-gui`)**:
+  - Works natively across all Linux desktop environments and window managers (KDE Plasma, GNOME, XFCE, Hyprland, Sway, i3) with zero toolkit bloat.
+  - **Live IR Camera Viewfinder**: Real-time 60 FPS grayscale IR feed, YuNet bounding box & 5-point landmark overlays, and Windows Hello-style circular 5-pose ring.
+  - **Profile & Template Management**: Inspect 5-angle coverage, remove individual pose templates, or reset your biometric profile.
+  - **Live Recognition Debugger**: Real-time cosine similarity gauge, per-pose template breakdown, eye-occlusion telemetry, and one-click daemon socket testing.
+  - **One-Click System & PAM Control**: Toggle Sudo-Only or System-Wide PAM authentication and manage `linux-hello.service` via native Polkit (`pkexec`) privilege elevation.
 - **Dedicated IR Camera Support**:
   - Direct Linux V4L2 `mmap` streaming on `/dev/video{n}` (usually 2, but it also auto-detects IR camera).
   - Automatically filters illuminated infrared strobe frames from ambient/dark frames.
@@ -143,7 +144,7 @@ If you only want facial authentication for `sudo` (leaving login, display manage
 - **Interactive Multi-Angle Enrollment**:
   - Guided 5-pose registration state machine: **Center**, **Turn Left** (15-20°), **Turn Right** (15-20°), **Tilt Up** (10-15°), and **Tilt Down** (10-15°).
   - Live horizontal (`yaw`) and vertical (`pitch`) pose estimation with real-time on-screen guidance (e.g. `➔ Turn more to your LEFT`).
-  - **3-Frame Steady Hold Requirement**: Verifies that the user holds the target pose steadily (`[●○○]` $\to$ `[●●○]` $\to$ `[●●●]`) before capturing.
+  - **3-Frame Steady Hold Requirement**: Verifies that the user holds the target pose steadily before capturing.
 - **Client-Daemon Architecture (like `fprintd`)**:
   - `linux-hellod`: Background system daemon keeping models warm in memory for instant sub-100ms verification.
   - `pam_linux_hello.so`: Ultra-lightweight (517 KB) PAM module with zero heavy runtime dependencies in PAM process space.
@@ -164,10 +165,10 @@ If you only want facial authentication for `sudo` (leaving login, display manage
                  |    pam_linux_hello.so     |
                  +-------------+-------------+
                                | Unix Socket (/run/linux-hello.sock)
-+-------------+  +-------------v-------------+
-| linux-hello |->|       linux-hellod        |
-|     CLI     |  +-------------+-------------+
-+-------------+                |
++-------------+  +-------------v-------------+  +-----------------+
+| linux-hello |->|       linux-hellod        |<-| linux-hello-gui |
+|     CLI     |  +-------------+-------------+  |  (Desktop App)  |
++-------------+                |                +-----------------+
                  +-------------+-------------+
                  |   V4L2 IR Stream Capture  |
                  |      (/dev/video2)        |
@@ -184,7 +185,7 @@ If you only want facial authentication for `sudo` (leaving login, display manage
                  +-------------+-------------+
                                |
                  +-------------v-------------+
-                 |   Cosine Similarity (0.50)|
+                 |   Cosine Similarity (0.65)|
                  |  vs Enrolled Vector DB    |
                  +---------------------------+
 ```
@@ -200,13 +201,16 @@ linux-hello/
 │   ├── linux-hello-core/      # OpenCV YuNet + SFace C++ bridge & Rust safe API
 │   ├── linux-hellod/          # Background daemon service & Unix socket IPC
 │   ├── pam_linux_hello/       # Thin PAM module (.so) with password fallback
-│   └── linux-hello-cli/       # CLI utility (linux-hello)
+│   ├── linux-hello-cli/       # CLI utility (linux-hello)
+│   └── linux-hello-gui/       # Standalone GUI application (linux-hello-gui)
 ├── models/
 │   ├── face_detection_yunet.onnx
 │   └── face_recognition_sface.onnx
 ├── debian/
-│   ├── linux-hello.service    # Systemd service unit
-│   └── pam-config             # pam-auth-update integration profile
+│   ├── linux-hello.service        # Systemd service unit
+│   ├── linux-hello-gui.desktop    # Freedesktop application launcher
+│   ├── org.linuxhello.pkexec.policy # Polkit policy for GUI administrative actions
+│   └── pam-config                 # pam-auth-update integration profile
 ├── Makefile                   # Build and system installation rules
 └── README.md
 ```
@@ -249,7 +253,14 @@ make
 ```
 *(To clean build artifacts at any time, run `make clean`.)*
 
-### 2. Inspect Connected Cameras
+### 2. Launch the Graphical Application (`linux-hello-gui`)
+```bash
+./target/release/linux-hello-gui
+# Or after installation:
+linux-hello gui
+```
+
+### 3. Inspect Connected Cameras
 ```bash
 ./target/release/linux-hello cameras
 ```
@@ -263,12 +274,12 @@ Device: "/dev/video2" [IR CAMERA]
   Formats: GREY
 ```
 
-### 3. Take a Snapshot from the IR Camera
+### 4. Take a Snapshot from the IR Camera
 ```bash
 ./target/release/linux-hello snapshot --output test_ir.png
 ```
 
-### 4. Enroll Your Face (Guided Multi-Angle)
+### 5. Enroll Your Face (Guided Multi-Angle)
 Position yourself in front of the IR camera and run:
 ```bash
 sudo ./target/release/linux-hello add
@@ -280,12 +291,12 @@ sudo ./target/release/linux-hello add
 - `--device /dev/videoX`: Specify a custom camera device node.
 - `[LABEL]`: Enroll a single custom template (e.g. `linux-hello add glasses`).
 
-### 5. List Enrolled Profiles
+### 6. List Enrolled Profiles
 ```bash
 sudo ./target/release/linux-hello list
 ```
 
-### 6. Test Live Recognition
+### 7. Test Live Recognition
 ```bash
 ./target/release/linux-hello test
 ```

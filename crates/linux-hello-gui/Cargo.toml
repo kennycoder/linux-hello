@@ -1,0 +1,21 @@
+[package]
+name = "linux-hello-gui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "linux-hello-gui"
+path = "src/main.rs"
+
+[dependencies]
+eframe.workspace = true
+env_logger.workspace = true
+image.workspace = true
+linux-hello-camera.workspace = true
+linux-hello-core.workspace = true
+log.workspace = true
+nix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
