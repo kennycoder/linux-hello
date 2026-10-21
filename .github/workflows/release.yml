@@ -8,10 +8,12 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 jobs:
-  build-release:
-    name: Build Debian Release
+  build-and-deploy:
+    name: Build & Publish Release
     runs-on: ubuntu-latest
 
     steps:
@@ -64,3 +66,41 @@ jobs:
           draft: false
           prerelease: false
 
+      # -------------------------------------------------------------
+      # Setup APT Repository via GitHub Pages
+      # -------------------------------------------------------------
+      - name: Setup GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Create APT repository
+        uses: morph027/apt-repo-action@v3
+        id: apt-repo
+        with:
+          repo-name: linux-hello
+          scan-dir: target
+          codename: stable
+          components: main
+          architectures: amd64
+          signing-key: ${{ secrets.GPG_SIGNING_KEY }}
+          signing-key-passphrase: ${{ secrets.GPG_PASSPHRASE }}
+          # Imports previous packages from live GitHub Pages so old releases remain available
+          import-from-repo-failure-allow: true
+          import-from-repo-url: |
+            deb-amd64 https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main
+
+      - name: Upload Pages Artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ${{ steps.apt-repo.outputs.dir }}
+
+  deploy-pages:
+    name: Deploy to GitHub Pages
+    runs-on: ubuntu-latest
+    needs: build-and-deploy
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
