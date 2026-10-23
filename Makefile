@@ -36,7 +36,17 @@ check-deps:
 		exit 1; \
 	fi
 
-build: check-deps
+build-kcm:
+	@if command -v cmake >/dev/null 2>&1; then \
+		echo "Configuring and building KDE Control Module (kcm_linuxhello)..."; \
+		if cmake -B kde-kcm/build -S kde-kcm -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(PREFIX) 2>/dev/null; then \
+			cmake --build kde-kcm/build || { echo "Warning: KDE KCM build failed."; }; \
+		else \
+			echo "KDE build dependencies (ECM / KF6 / Qt6) not fully present; skipping KCM build."; \
+		fi \
+	fi
+
+build: check-deps build-kcm
 	$(CARGO) build $(CARGO_FLAGS)
 
 test: check-deps
@@ -44,6 +54,7 @@ test: check-deps
 
 clean:
 	$(CARGO) clean
+	rm -rf kde-kcm/build
 
 install:
 	@if [ ! -f target/release/linux-hello ] || [ ! -f target/release/linux-hellod ] || [ ! -f target/release/linux-hello-gui ] || [ ! -f target/release/libpam_linux_hello.so ]; then \
@@ -92,6 +103,12 @@ install:
 	install -d $(DESTDIR)$(PREFIX)/share/pam-configs
 	install -m 644 debian/pam-config $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello
 
+	# Install KDE Plasma Control Module if built
+	@if [ -f kde-kcm/build/bin/plasma/kcms/systemsettings/kcm_linuxhello.so ]; then \
+		echo "Installing KDE Plasma Control Module..."; \
+		DESTDIR=$(DESTDIR) cmake --install kde-kcm/build; \
+	fi
+
 VERSION ?= 0.1.0
 ARCH ?= amd64
 DEB_BUILD_DIR = target/debian/linux-hello_$(VERSION)_$(ARCH)
@@ -120,10 +137,13 @@ uninstall:
 	rm -f $(DESTDIR)/lib/systemd/system/linux-hello.service
 	rm -f $(DESTDIR)/etc/systemd/system/linux-hello.service
 	rm -f $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello
+	rm -f $(DESTDIR)$(PREFIX)/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_linuxhello.so
+	rm -f $(DESTDIR)$(PREFIX)/lib64/qt6/plugins/plasma/kcms/systemsettings/kcm_linuxhello.so
+	rm -f $(DESTDIR)$(PREFIX)/share/applications/kcm_linuxhello.desktop
 	@if command -v pam-auth-update >/dev/null 2>&1; then \
 		pam-auth-update --package; \
 	fi
 
 
-.PHONY: all check-deps build test clean install uninstall deb
+.PHONY: all check-deps build build-kcm test clean install uninstall deb
 

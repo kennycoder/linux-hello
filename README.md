@@ -130,6 +130,11 @@ If you only want facial authentication for `sudo` (leaving login, display manage
   - **Profile & Template Management**: Inspect 5-angle coverage, remove individual pose templates, or reset your biometric profile.
   - **Live Recognition Debugger**: Real-time cosine similarity gauge, per-pose template breakdown, eye-occlusion telemetry, and one-click daemon socket testing.
   - **One-Click System & PAM Control**: Toggle Sudo-Only or System-Wide PAM authentication and manage `linux-hello.service` via native Polkit (`pkexec`) privilege elevation.
+- **Native KDE Plasma System Settings Module (`kcm_linuxhello`)**:
+  - Native KDE Control Module (KCM) built with Qt 6, KDE Frameworks 6 (KF6), and Kirigami FormCards.
+  - Located under **Security & Privacy** in KDE Plasma System Settings.
+  - Displays at-a-glance system status (daemon active/stopped, camera hardware detection, PAM integration mode, enrolled user accounts).
+  - Provides instant access to trigger the Linux Hello Manager or start the daemon service.
 - **Dedicated IR Camera Support**:
   - Direct Linux V4L2 `mmap` streaming on `/dev/video{n}` (usually 2, but it also auto-detects IR camera).
   - Automatically filters illuminated infrared strobe frames from ambient/dark frames.

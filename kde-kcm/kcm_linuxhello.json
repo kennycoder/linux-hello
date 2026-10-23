@@ -1,0 +1,18 @@
+{
+    "KPlugin": {
+        "Name": "Facial Authentication",
+        "Description": "Configure Linux Hello face recognition authentication",
+        "Icon": "camera-web",
+        "Authors": [
+            {
+                "Name": "Nikolai",
+                "Email": "kennycoder@users.noreply.github.com"
+            }
+        ],
+        "Category": "security-privacy"
+    },
+    "X-KDE-System-Settings-Parent-Category": "security-privacy",
+    "X-KDE-Weight": 65,
+    "X-KDE-Keywords": "facial;face;authentication;biometrics;hello;camera;login;security;lockscreen;"
+}
+
