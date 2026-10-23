@@ -607,7 +607,7 @@ impl LinuxHelloGuiApp {
                     painter.rect_stroke(
                         face_rect,
                         CornerRadius::same(6),
-                        Stroke::new(2.0, box_color),
+                        Stroke::new(2.0_f32, box_color),
                         StrokeKind::Outside,
                     );
 
@@ -660,7 +660,7 @@ impl LinuxHelloGuiApp {
             let color_pending = Color32::from_rgba_unmultiplied(148, 163, 184, 90);
 
             // Base subtle guide circle
-            painter.circle_stroke(center, radius, Stroke::new(2.0, color_pending));
+            painter.circle_stroke(center, radius, Stroke::new(2.0_f32, color_pending));
 
             let live_pose_idx = live_detected_pose.and_then(|(id, _)| {
                 FIVE_POSES.iter().position(|p| p.id == id)
@@ -697,7 +697,7 @@ impl LinuxHelloGuiApp {
             };
 
             // Inner ring for Center pose (idx 0)
-            painter.circle_stroke(center, radius * 0.86, Stroke::new(3.0, pose_color(0)));
+            painter.circle_stroke(center, radius * 0.86, Stroke::new(3.0_f32, pose_color(0)));
 
             // Directional arc segments: (pose_idx, start_deg, end_deg)
             // Note: When mirror_preview is true, user's Turn Left moves face toward left of screen (180 deg)
@@ -726,7 +726,7 @@ impl LinuxHelloGuiApp {
                         center.y + radius * rad.sin(),
                     ));
                 }
-                painter.add(egui::Shape::line(pts, Stroke::new(5.5, col)));
+                painter.add(egui::Shape::line(pts, Stroke::new(5.5_f32, col)));
             }
 
             // 3-step hold dots at bottom of viewfinder
@@ -749,7 +749,7 @@ impl LinuxHelloGuiApp {
         painter.rect_stroke(
             rect,
             CornerRadius::same(12),
-            Stroke::new(1.5, Color32::from_rgb(51, 65, 85)),
+            Stroke::new(1.5_f32, Color32::from_rgb(51, 65, 85)),
             StrokeKind::Inside,
         );
     }
@@ -1975,8 +1975,10 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_title("Linux-Hello — Biometric Facial Authentication")
             .with_app_id("linux-hello-gui")
-            .with_inner_size([1080.0, 620.0])
-            .with_min_inner_size([900.0, 520.0]),
+            .with_inner_size([900.0, 540.0])
+            .with_min_inner_size([900.0, 540.0])
+            .with_max_inner_size([900.0, 540.0])
+            .with_resizable(false),
         ..Default::default()
     };
 

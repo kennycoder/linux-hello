@@ -3,3 +3,8 @@ target/
 !assets/linux-hello-gui.png
 *.raw
 .DS_Store
+
+kde-kcm/build/
+.vscode/
+.vscode/
+
