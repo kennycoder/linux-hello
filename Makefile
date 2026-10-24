@@ -99,9 +99,6 @@ install:
 	install -d $(DESTDIR)/lib/systemd/system
 	install -m 644 debian/linux-hello.service $(DESTDIR)/lib/systemd/system/linux-hello.service
 
-	# Debian PAM profile
-	install -d $(DESTDIR)$(PREFIX)/share/pam-configs
-	install -m 644 debian/pam-config $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello
 	# PAM profile configuration
 	@if command -v authselect >/dev/null 2>&1; then \
 		echo "Detected authselect (Fedora/RHEL)."; \
@@ -116,7 +113,7 @@ install:
 		install -d $(DESTDIR)$(PREFIX)/share/pam-configs; \
 		install -m 644 debian/pam-config $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello; \
 	else \
-		echo "Notice: Neither authselect nor pam-auth-update detected. Install pam_linux_hello.so into PAM manually or run 'linux-hello enable'."; \
+		echo "Notice: Neither authselect nor pam-auth-update detected. Sudo-Only mode (linux-hello enable --sudo-only) or manual PAM entry is recommended."; \
 	fi
 
 	# Install KDE Plasma Control Module if built

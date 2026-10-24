@@ -1475,6 +1475,8 @@ impl LinuxHelloGuiApp {
                         let enabled = self.pam_status.is_system_wide_enabled();
                         let title = if self.pam_status.is_authselect {
                             "System-Wide PAM (authselect)"
+                        } else if self.pam_status.is_arch {
+                            "System-Wide PAM (/etc/pam.d/system-auth)"
                         } else {
                             "System-Wide PAM (pam-auth-update)"
                         };
@@ -1494,6 +1496,8 @@ impl LinuxHelloGuiApp {
                         ui.add_space(4.0);
                         let desc = if self.pam_status.is_authselect {
                             "Configures an authselect custom profile (custom/linux-hello) in /etc/pam.d/system-auth and password-auth for sudo, login, lock screens, and display managers."
+                        } else if self.pam_status.is_arch {
+                            "Injects pam_linux_hello.so into /etc/pam.d/system-auth with faillock-aware success jumps for sudo, display managers, and lock screens."
                         } else {
                             "Registers /usr/share/pam-configs/linux-hello in /etc/pam.d/common-auth for sudo, Polkit GUI prompts, lock screens, and display managers."
                         };

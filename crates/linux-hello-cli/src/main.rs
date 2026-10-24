@@ -1284,8 +1284,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or(false)
                     || Path::new("/usr/share/pam-configs").exists();
 
+                let is_arch = Path::new("/etc/arch-release").exists()
+                    || (Path::new("/etc/pam.d/system-auth").exists() && !has_authselect && !has_pam_auth_update);
+
                 if has_authselect {
                     enable_system_wide_authselect()?;
+                } else if is_arch {
+                    enable_system_wide_arch()?;
                 } else if has_pam_auth_update {
                     println!("Configuring system-wide Debian PAM integration for Linux-Hello...");
                     let pam_config = r#"Name: Linux-Hello face authentication
@@ -1353,8 +1358,13 @@ Auth:
 
                 let config_path = "/usr/share/pam-configs/linux-hello";
 
+                let is_arch = Path::new("/etc/arch-release").exists()
+                    || (Path::new("/etc/pam.d/system-auth").exists() && !has_authselect && !Path::new(config_path).exists());
+
                 if custom_authselect_dir.exists() || (has_authselect && !Path::new(config_path).exists()) {
                     disable_system_wide_authselect()?;
+                } else if is_arch {
+                    disable_system_wide_arch()?;
                 } else if Path::new(config_path).exists() {
                     println!("Removing {}...", config_path);
                     match fs::remove_file(config_path) {
@@ -1559,5 +1569,146 @@ fn disable_system_wide_authselect() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     println!("\n[SUCCESS] Linux-Hello system-wide authselect profile has been disabled.");
+    Ok(())
+}
+
+fn enable_system_wide_arch() -> Result<(), Box<dyn std::error::Error>> {
+    let pam_path = "/etc/pam.d/system-auth";
+    println!("Configuring Arch Linux PAM integration in {}...", pam_path);
+
+    let content = fs::read_to_string(pam_path)
+        .map_err(|e| format!("Failed to read {}: {}. Run with sudo.", pam_path, e))?;
+
+    if content.contains("pam_linux_hello.so") {
+        println!("Linux-Hello is already configured in {}.", pam_path);
+        return Ok(());
+    }
+
+    // Backup original configuration once
+    let backup_path = "/etc/pam.d/system-auth.linux-hello.bak";
+    if !Path::new(backup_path).exists() {
+        let _ = fs::copy(pam_path, backup_path);
+        println!("Created backup of {} at {}", pam_path, backup_path);
+    }
+
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+
+    // Check if pam_faillock is present in the auth stack to determine jump structure
+    let has_faillock_authfail = lines.iter().any(|l| {
+        let t = l.trim();
+        t.starts_with("auth") && t.contains("pam_faillock.so") && t.contains("authfail")
+    });
+
+    let mut insert_idx = None;
+    for (i, line) in lines.iter().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("auth") && (trimmed.contains("pam_unix.so") || trimmed.contains("pam_fprintd.so")) {
+            insert_idx = Some(i);
+            break;
+        }
+    }
+
+    let idx = match insert_idx {
+        Some(i) => i,
+        None => {
+            return Err(format!("Could not find insertion point before pam_unix.so in {}", pam_path).into());
+        }
+    };
+
+    // If pam_systemd_home exists before the insertion point and has a [success=N ...],
+    // we need to increment its success jump count by 1 since we're inserting a new module line before pam_unix.
+    for i in 0..idx {
+        let line = &lines[i];
+        let trimmed = line.trim();
+        if trimmed.contains("pam_systemd_home.so") && trimmed.contains("success=") {
+            if let Some(pos) = line.find("success=") {
+                let after = &line[pos + 8..];
+                if let Some(digit_len) = after.find(|c: char| !c.is_ascii_digit()) {
+                    if let Ok(num) = after[..digit_len].parse::<u32>() {
+                        let old_sub = format!("success={}", num);
+                        let new_sub = format!("success={}", num + 1);
+                        lines[i] = line.replace(&old_sub, &new_sub);
+                        println!("Adjusted pam_systemd_home jump from {} to {}", old_sub, new_sub);
+                    }
+                }
+            }
+        }
+    }
+
+    // Determine the exact rule to insert:
+    // With faillock: auth [success=2 default=ignore] pam_linux_hello.so
+    //   -> jumps over pam_unix.so (1) and pam_faillock authfail (2) straight to authsucc/permit!
+    // Without faillock: auth [success=end default=ignore] pam_linux_hello.so (or sufficient)
+    let hello_rule = if has_faillock_authfail {
+        "auth      [success=2 default=ignore]  pam_linux_hello.so"
+    } else {
+        "auth      [success=end default=ignore] pam_linux_hello.so"
+    };
+
+    println!("Inserting '{}' before pam_unix.so at line {}...", hello_rule, idx + 1);
+    lines.insert(idx, hello_rule.to_string());
+
+    let mut new_content = lines.join("\n");
+    new_content.push('\n');
+
+    fs::write(pam_path, new_content)
+        .map_err(|e| format!("Failed to write updated {}: {}", pam_path, e))?;
+
+    println!("\n[SUCCESS] Linux-Hello is now enabled system-wide in {}!", pam_path);
+    Ok(())
+}
+
+fn disable_system_wide_arch() -> Result<(), Box<dyn std::error::Error>> {
+    let pam_path = "/etc/pam.d/system-auth";
+    println!("Disabling Arch Linux PAM integration in {}...", pam_path);
+
+    if !Path::new(pam_path).exists() {
+        println!("{} does not exist.", pam_path);
+        return Ok(());
+    }
+
+    let content = fs::read_to_string(pam_path)
+        .map_err(|e| format!("Failed to read {}: {}", pam_path, e))?;
+
+    if !content.contains("pam_linux_hello.so") {
+        println!("Linux-Hello is not installed in {}.", pam_path);
+        return Ok(());
+    }
+
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+
+    // Check where pam_linux_hello is
+    let hello_idx = lines.iter().position(|l| l.contains("pam_linux_hello.so"));
+
+    if let Some(h_idx) = hello_idx {
+        // Decrement any pam_systemd_home jump before it
+        for i in 0..h_idx {
+            let line = &lines[i];
+            let trimmed = line.trim();
+            if trimmed.contains("pam_systemd_home.so") && trimmed.contains("success=") {
+                if let Some(pos) = line.find("success=") {
+                    let after = &line[pos + 8..];
+                    if let Some(digit_len) = after.find(|c: char| !c.is_ascii_digit()) {
+                        if let Ok(num) = after[..digit_len].parse::<u32>() {
+                            if num > 1 {
+                                let old_sub = format!("success={}", num);
+                                let new_sub = format!("success={}", num - 1);
+                                lines[i] = line.replace(&old_sub, &new_sub);
+                                println!("Reverted pam_systemd_home jump from {} to {}", old_sub, new_sub);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        lines.remove(h_idx);
+        let mut new_content = lines.join("\n");
+        new_content.push('\n');
+        fs::write(pam_path, new_content)
+            .map_err(|e| format!("Failed to write updated {}: {}", pam_path, e))?;
+        println!("\n[SUCCESS] Removed Linux-Hello from {}.", pam_path);
+    }
+
     Ok(())
 }
