@@ -23,6 +23,7 @@ pub struct DaemonStatus {
 pub struct PamStatus {
     pub system_wide_config_exists: bool,
     pub common_auth_has_hello: bool,
+    pub is_authselect: bool,
     pub sudo_only_pam_exists: bool,
     pub sudo_only_sudoers_exists: bool,
 }
@@ -316,10 +317,29 @@ pub fn run_daemon_auth_test(socket_path: &Path, username: &str) -> Result<(bool,
 }
 
 pub fn query_pam_status() -> PamStatus {
-    let system_wide_config_exists = Path::new("/usr/share/pam-configs/linux-hello").exists();
-    let common_auth_has_hello = fs::read_to_string("/etc/pam.d/common-auth")
-        .map(|c| c.contains("pam_linux_hello.so"))
-        .unwrap_or(false);
+    let custom_authselect_dir = Path::new("/etc/authselect/custom/linux-hello");
+    let has_authselect = Command::new("which")
+        .arg("authselect")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+        || Path::new("/usr/bin/authselect").exists()
+        || custom_authselect_dir.exists();
+
+    let (system_wide_config_exists, common_auth_has_hello, is_authselect) = if has_authselect && !Path::new("/usr/share/pam-configs/linux-hello").exists() {
+        let exists = custom_authselect_dir.exists();
+        let in_system_auth = fs::read_to_string("/etc/pam.d/system-auth")
+            .map(|c| c.contains("pam_linux_hello.so"))
+            .unwrap_or(false);
+        (exists, in_system_auth, true)
+    } else {
+        let debian_config = Path::new("/usr/share/pam-configs/linux-hello").exists();
+        let in_common_auth = fs::read_to_string("/etc/pam.d/common-auth")
+            .map(|c| c.contains("pam_linux_hello.so"))
+            .unwrap_or(false);
+        (debian_config, in_common_auth, false)
+    };
+
     let sudo_only_pam_exists = Path::new("/etc/pam.d/sudo-hello").exists();
     let sudo_only_sudoers_exists = Path::new("/etc/sudoers.d/linux-hello").exists()
         || Path::new("/etc/sudoers.d/custom_etc_sudoers_d").exists();
@@ -327,6 +347,7 @@ pub fn query_pam_status() -> PamStatus {
     PamStatus {
         system_wide_config_exists,
         common_auth_has_hello,
+        is_authselect,
         sudo_only_pam_exists,
         sudo_only_sudoers_exists,
     }

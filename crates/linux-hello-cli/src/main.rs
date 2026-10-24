@@ -1244,7 +1244,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if sudo_only {
                 println!("Configuring Sudo-Only PAM integration for Linux-Hello...");
                 let base_sudo_pam = fs::read_to_string("/etc/pam.d/sudo").unwrap_or_else(|_| {
-                    "#%PAM-1.0\n@include common-auth\n@include common-account\n@include common-session-noninteractive\n".to_string()
+                    if Path::new("/etc/pam.d/system-auth").exists() {
+                        "#%PAM-1.0\nauth       include      system-auth\naccount    include      system-auth\npassword   include      system-auth\nsession    include      system-auth\n".to_string()
+                    } else {
+                        "#%PAM-1.0\n@include common-auth\n@include common-account\n@include common-session-noninteractive\n".to_string()
+                    }
                 });
                 let sudo_hello_content = if base_sudo_pam.contains("pam_linux_hello.so") {
                     base_sudo_pam
@@ -1266,32 +1270,53 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!("[SUCCESS] Sudo-Only facial authentication enabled ({} + {}).", pam_target, sudoers_target);
             } else {
-                println!("Configuring system-wide Debian PAM integration for Linux-Hello...");
-                let pam_config = r#"Name: Linux-Hello face authentication
+                let has_authselect = Command::new("which")
+                    .arg("authselect")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                    || Path::new("/usr/bin/authselect").exists();
+
+                let has_pam_auth_update = Command::new("which")
+                    .arg("pam-auth-update")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                    || Path::new("/usr/share/pam-configs").exists();
+
+                if has_authselect {
+                    enable_system_wide_authselect()?;
+                } else if has_pam_auth_update {
+                    println!("Configuring system-wide Debian PAM integration for Linux-Hello...");
+                    let pam_config = r#"Name: Linux-Hello face authentication
 Default: yes
 Priority: 260
 Auth-Type: Primary
 Auth:
 	[success=end default=ignore] pam_linux_hello.so
 "#;
-                let config_path = "/usr/share/pam-configs/linux-hello";
-                println!("Writing PAM profile to {}...", config_path);
-                match fs::write(config_path, pam_config) {
-                    Ok(_) => {
-                        println!("Running pam-auth-update to enable Linux-Hello across sudo and login...");
-                        let status = Command::new("pam-auth-update")
-                            .arg("--package")
-                            .status()?;
-                        if status.success() {
-                            println!("\n[SUCCESS] Linux-Hello is now enabled for system authentication!");
-                        } else {
-                            println!("\n[WARNING] pam-auth-update exited with status: {}", status);
+                    let config_path = "/usr/share/pam-configs/linux-hello";
+                    println!("Writing PAM profile to {}...", config_path);
+                    match fs::write(config_path, pam_config) {
+                        Ok(_) => {
+                            println!("Running pam-auth-update to enable Linux-Hello across sudo and login...");
+                            let status = Command::new("pam-auth-update")
+                                .arg("--package")
+                                .status()?;
+                            if status.success() {
+                                println!("\n[SUCCESS] Linux-Hello is now enabled for system authentication!");
+                            } else {
+                                println!("\n[WARNING] pam-auth-update exited with status: {}", status);
+                            }
+                        }
+                        Err(e) => {
+                            eprintln!("\n[ERROR] Failed to write {}: {}. Run with sudo.", config_path, e);
+                            return Err(e.into());
                         }
                     }
-                    Err(e) => {
-                        eprintln!("\n[ERROR] Failed to write {}: {}. Run with sudo.", config_path, e);
-                        return Err(e.into());
-                    }
+                } else {
+                    println!("[WARNING] Neither 'authselect' (Fedora/RHEL) nor 'pam-auth-update' (Debian/Ubuntu) was found.");
+                    println!("To enable Linux-Hello manually, add 'auth sufficient pam_linux_hello.so' to your PAM configuration (e.g. /etc/pam.d/system-auth or /etc/pam.d/common-auth).");
                 }
             }
         }
@@ -1317,8 +1342,20 @@ Auth:
                     println!("Sudo-Only Linux-Hello configuration was not installed.");
                 }
             } else {
+                let custom_authselect_dir = Path::new("/etc/authselect/custom/linux-hello");
+                let has_authselect = Command::new("which")
+                    .arg("authselect")
+                    .output()
+                    .map(|o| o.status.success())
+                    .unwrap_or(false)
+                    || Path::new("/usr/bin/authselect").exists()
+                    || custom_authselect_dir.exists();
+
                 let config_path = "/usr/share/pam-configs/linux-hello";
-                if Path::new(config_path).exists() {
+
+                if custom_authselect_dir.exists() || (has_authselect && !Path::new(config_path).exists()) {
+                    disable_system_wide_authselect()?;
+                } else if Path::new(config_path).exists() {
                     println!("Removing {}...", config_path);
                     match fs::remove_file(config_path) {
                         Ok(_) => {
@@ -1358,5 +1395,169 @@ Auth:
         }
     }
 
+    Ok(())
+}
+
+fn enable_system_wide_authselect() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Configuring system-wide authselect PAM integration for Linux-Hello (Fedora/RHEL)...");
+
+    // 1. Query current authselect configuration
+    let current_output = Command::new("authselect")
+        .arg("current")
+        .output()
+        .map_err(|e| format!("Failed to run 'authselect current': {}. Is authselect installed?", e))?;
+
+    let current_str = String::from_utf8_lossy(&current_output.stdout);
+
+    // Extract profile ID from "Profile ID: <id>"
+    let mut base_profile = "sssd".to_string();
+    let mut features: Vec<String> = Vec::new();
+
+    for line in current_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("Profile ID:") {
+            let prof = trimmed.trim_start_matches("Profile ID:").trim();
+            // If already custom/linux-hello, read base profile if recorded
+            if prof.starts_with("custom/") {
+                let recorded_base = Path::new("/etc/authselect/custom/linux-hello/.base-profile");
+                if let Ok(b) = fs::read_to_string(recorded_base) {
+                    let b = b.trim();
+                    if !b.is_empty() {
+                        base_profile = b.to_string();
+                    }
+                }
+            } else if !prof.is_empty() {
+                base_profile = prof.to_string();
+            }
+        } else if trimmed.starts_with("- with-") || trimmed.starts_with("- without-") {
+            let feat = trimmed.trim_start_matches("- ").trim();
+            if !feat.is_empty() {
+                features.push(feat.to_string());
+            }
+        }
+    }
+
+    let custom_dir = Path::new("/etc/authselect/custom/linux-hello");
+    if !custom_dir.exists() {
+        println!("Creating custom authselect profile 'linux-hello' based on '{}'...", base_profile);
+        let create_status = Command::new("authselect")
+            .args(["create-profile", "linux-hello", "-b", &base_profile, "--symlink-meta"])
+            .status()
+            .map_err(|e| format!("Failed to create authselect profile: {}. Run with sudo.", e))?;
+
+        if !create_status.success() {
+            return Err(format!("'authselect create-profile' exited with code {:?}", create_status.code()).into());
+        }
+
+        // Record the base profile for clean rollback
+        let _ = fs::write(custom_dir.join(".base-profile"), format!("{}\n", base_profile));
+    }
+
+    // Helper to insert pam_linux_hello.so into an authselect pam file
+    let inject_pam = |filename: &str| -> Result<(), Box<dyn std::error::Error>> {
+        let file_path = custom_dir.join(filename);
+        if !file_path.exists() {
+            return Ok(());
+        }
+        let content = fs::read_to_string(&file_path)?;
+        if content.contains("pam_linux_hello.so") {
+            return Ok(());
+        }
+
+        let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+        let hello_line = "auth        sufficient    pam_linux_hello.so".to_string();
+
+        // Search for insertion point: before first auth sufficient/required pam_unix.so or pam_fprintd.so or with-fingerprint
+        let mut insert_idx = None;
+        for (i, line) in lines.iter().enumerate() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("auth") && (trimmed.contains("pam_unix.so") || trimmed.contains("pam_fprintd.so") || trimmed.contains("pam_sss.so") || trimmed.contains("pam_usermode.so")) {
+                insert_idx = Some(i);
+                break;
+            }
+        }
+
+        if let Some(idx) = insert_idx {
+            lines.insert(idx, hello_line);
+        } else {
+            // Append after header or first auth line
+            lines.push(hello_line);
+        }
+
+        let mut new_content = lines.join("\n");
+        new_content.push('\n');
+        fs::write(&file_path, new_content)?;
+        Ok(())
+    };
+
+    println!("Injecting pam_linux_hello.so into authselect profile templates...");
+    inject_pam("system-auth")?;
+    inject_pam("password-auth")?;
+
+    println!("Activating custom/linux-hello profile with authselect...");
+    let mut select_cmd = Command::new("authselect");
+    select_cmd.args(["select", "custom/linux-hello"]);
+    for feat in &features {
+        select_cmd.arg(feat);
+    }
+    select_cmd.arg("--force");
+
+    let status = select_cmd.status().map_err(|e| format!("Failed to apply authselect profile: {}", e))?;
+    if status.success() {
+        println!("\n[SUCCESS] Linux-Hello is now enabled system-wide via authselect!");
+        Ok(())
+    } else {
+        Err(format!("'authselect select' exited with status: {}", status).into())
+    }
+}
+
+fn disable_system_wide_authselect() -> Result<(), Box<dyn std::error::Error>> {
+    println!("Disabling authselect PAM integration for Linux-Hello...");
+
+    // Query features and active profile
+    let current_output = Command::new("authselect")
+        .arg("current")
+        .output()
+        .map_err(|e| format!("Failed to run 'authselect current': {}", e))?;
+
+    let current_str = String::from_utf8_lossy(&current_output.stdout);
+    let mut features: Vec<String> = Vec::new();
+    for line in current_str.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("- with-") || trimmed.starts_with("- without-") {
+            let feat = trimmed.trim_start_matches("- ").trim();
+            if !feat.is_empty() {
+                features.push(feat.to_string());
+            }
+        }
+    }
+
+    let custom_dir = Path::new("/etc/authselect/custom/linux-hello");
+    let base_profile = if let Ok(b) = fs::read_to_string(custom_dir.join(".base-profile")) {
+        let b = b.trim().to_string();
+        if b.is_empty() { "sssd".to_string() } else { b }
+    } else {
+        "sssd".to_string()
+    };
+
+    println!("Reverting authselect profile to '{}'...", base_profile);
+    let mut select_cmd = Command::new("authselect");
+    select_cmd.args(["select", &base_profile]);
+    for feat in &features {
+        select_cmd.arg(feat);
+    }
+    select_cmd.arg("--force");
+
+    let status = select_cmd.status().map_err(|e| format!("Failed to revert authselect profile: {}", e))?;
+    if !status.success() {
+        eprintln!("[WARNING] authselect revert exited with status: {}", status);
+    }
+
+    if custom_dir.exists() {
+        println!("Cleaning up {}...", custom_dir.display());
+        let _ = fs::remove_dir_all(custom_dir);
+    }
+
+    println!("\n[SUCCESS] Linux-Hello system-wide authselect profile has been disabled.");
     Ok(())
 }
