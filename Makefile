@@ -99,6 +99,9 @@ install:
 	install -d $(DESTDIR)/lib/systemd/system
 	install -m 644 debian/linux-hello.service $(DESTDIR)/lib/systemd/system/linux-hello.service
 
+	# Debian PAM profile
+	install -d $(DESTDIR)$(PREFIX)/share/pam-configs
+	install -m 644 debian/pam-config $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello
 	# PAM profile configuration
 	@if command -v authselect >/dev/null 2>&1; then \
 		echo "Detected authselect (Fedora/RHEL)."; \

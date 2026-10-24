@@ -1494,6 +1494,7 @@ dependencies = [
  "cxx-build",
  "linux-hello-camera",
  "log",
+ "pkg-config",
  "serde",
  "serde_json",
  "tempfile",

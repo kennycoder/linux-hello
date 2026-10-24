@@ -112,6 +112,13 @@ void KcmLinuxHello::refreshStatus()
 
     // 3. PAM status
     m_pamSystemWide = false;
+    QFile commonAuth(QStringLiteral("/etc/pam.d/common-auth"));
+    if (commonAuth.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        while (!commonAuth.atEnd()) {
+            QString line = QString::fromUtf8(commonAuth.readLine()).trimmed();
+            if (!line.startsWith(QLatin1Char('#')) && line.contains(QStringLiteral("pam_linux_hello.so"))) {
+                m_pamSystemWide = true;
+                break;
     auto checkPamFile = [](const QString &path) -> bool {
         QFile file(path);
         if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
