@@ -119,8 +119,22 @@ void KcmLinuxHello::refreshStatus()
             if (!line.startsWith(QLatin1Char('#')) && line.contains(QStringLiteral("pam_linux_hello.so"))) {
                 m_pamSystemWide = true;
                 break;
+    auto checkPamFile = [](const QString &path) -> bool {
+        QFile file(path);
+        if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            while (!file.atEnd()) {
+                QString line = QString::fromUtf8(file.readLine()).trimmed();
+                if (!line.startsWith(QLatin1Char('#')) && line.contains(QStringLiteral("pam_linux_hello.so"))) {
+                    return true;
+                }
             }
         }
+        return false;
+    };
+
+    if (checkPamFile(QStringLiteral("/etc/pam.d/common-auth")) ||
+        checkPamFile(QStringLiteral("/etc/pam.d/system-auth"))) {
+        m_pamSystemWide = true;
     }
 
     m_pamSudoOnly = QFile::exists(QStringLiteral("/etc/pam.d/sudo-hello")) &&

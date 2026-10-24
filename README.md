@@ -55,13 +55,16 @@ sudo systemctl enable --now linux-hello.service
 ### Enabling PAM Authentication
 
 #### 1. System-Wide PAM Setup
-- **Debian / Ubuntu** (via `pam-auth-update`):
+- **Debian / Ubuntu** (via `pam-auth-update`), **Fedora / RHEL** (via `authselect`), and **Arch Linux** (via `/etc/pam.d/system-auth`):
   ```bash
   sudo linux-hello enable
   # Or to disable at any time:
   sudo linux-hello disable
   ```
-- **RHEL / Fedora & Arch Linux**:
+  - On **Fedora/RHEL**, `sudo linux-hello enable` creates and activates a custom profile (`custom/linux-hello`).
+  - On **Arch Linux**, `sudo linux-hello enable` safely inserts `pam_linux_hello.so` into `/etc/pam.d/system-auth` right before `pam_unix.so` using `[success=2 default=ignore]` (jumping over password prompt and `pam_faillock authfail`), while automatically updating `pam_systemd_home` jump offsets.
+  - On **Debian/Ubuntu**, it registers and runs `pam-auth-update`.
+- **Other Distributions**:
   Add the following line near the top of `/etc/pam.d/sudo` (or `/etc/pam.d/system-auth` / `/etc/pam.d/system-local-login`):
   ```text
   auth    sufficient    pam_linux_hello.so

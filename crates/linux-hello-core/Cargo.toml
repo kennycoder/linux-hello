@@ -17,5 +17,6 @@ tempfile.workspace = true
 
 [build-dependencies]
 cxx-build.workspace = true
+pkg-config = "0.3"
 
 

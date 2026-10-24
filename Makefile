@@ -99,9 +99,22 @@ install:
 	install -d $(DESTDIR)/lib/systemd/system
 	install -m 644 debian/linux-hello.service $(DESTDIR)/lib/systemd/system/linux-hello.service
 
-	# Debian PAM profile
-	install -d $(DESTDIR)$(PREFIX)/share/pam-configs
-	install -m 644 debian/pam-config $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello
+	# PAM profile configuration
+	@if command -v authselect >/dev/null 2>&1; then \
+		echo "Detected authselect (Fedora/RHEL)."; \
+		if [ -z "$(DESTDIR)" ]; then \
+			echo "Running '$(PREFIX)/bin/linux-hello enable' to activate PAM profile..."; \
+			$(DESTDIR)$(PREFIX)/bin/linux-hello enable || true; \
+		else \
+			echo "Staging build (DESTDIR set); skipping live authselect configuration."; \
+		fi; \
+	elif [ -d /usr/share/pam-configs ] || command -v pam-auth-update >/dev/null 2>&1; then \
+		echo "Detected Debian/Ubuntu PAM configuration framework."; \
+		install -d $(DESTDIR)$(PREFIX)/share/pam-configs; \
+		install -m 644 debian/pam-config $(DESTDIR)$(PREFIX)/share/pam-configs/linux-hello; \
+	else \
+		echo "Notice: Neither authselect nor pam-auth-update detected. Sudo-Only mode (linux-hello enable --sudo-only) or manual PAM entry is recommended."; \
+	fi
 
 	# Install KDE Plasma Control Module if built
 	@if [ -f kde-kcm/build/bin/plasma/kcms/systemsettings/kcm_linuxhello.so ]; then \
@@ -140,6 +153,11 @@ uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/lib/x86_64-linux-gnu/qt6/plugins/plasma/kcms/systemsettings/kcm_linuxhello.so
 	rm -f $(DESTDIR)$(PREFIX)/lib64/qt6/plugins/plasma/kcms/systemsettings/kcm_linuxhello.so
 	rm -f $(DESTDIR)$(PREFIX)/share/applications/kcm_linuxhello.desktop
+	@if [ -d /etc/authselect/custom/linux-hello ] || command -v authselect >/dev/null 2>&1; then \
+		if [ -z "$(DESTDIR)" ] && [ -x $(PREFIX)/bin/linux-hello ]; then \
+			$(PREFIX)/bin/linux-hello disable || true; \
+		fi; \
+	fi
 	@if command -v pam-auth-update >/dev/null 2>&1; then \
 		pam-auth-update --package; \
 	fi

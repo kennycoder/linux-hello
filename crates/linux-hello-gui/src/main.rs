@@ -1473,9 +1473,16 @@ impl LinuxHelloGuiApp {
                     .inner_margin(14.0)
                     .show(ui, |ui| {
                         let enabled = self.pam_status.is_system_wide_enabled();
+                        let title = if self.pam_status.is_authselect {
+                            "System-Wide PAM (authselect)"
+                        } else if self.pam_status.is_arch {
+                            "System-Wide PAM (/etc/pam.d/system-auth)"
+                        } else {
+                            "System-Wide PAM (pam-auth-update)"
+                        };
                         ui.horizontal(|ui| {
                             ui.label(
-                                RichText::new("System-Wide PAM (pam-auth-update)")
+                                RichText::new(title)
                                     .size(15.5)
                                     .strong(),
                             );
@@ -1487,12 +1494,17 @@ impl LinuxHelloGuiApp {
                             ui.colored_label(badge_col, RichText::new(badge_txt).strong());
                         });
                         ui.add_space(4.0);
+                        let desc = if self.pam_status.is_authselect {
+                            "Configures an authselect custom profile (custom/linux-hello) in /etc/pam.d/system-auth and password-auth for sudo, login, lock screens, and display managers."
+                        } else if self.pam_status.is_arch {
+                            "Injects pam_linux_hello.so into /etc/pam.d/system-auth with faillock-aware success jumps for sudo, display managers, and lock screens."
+                        } else {
+                            "Registers /usr/share/pam-configs/linux-hello in /etc/pam.d/common-auth for sudo, Polkit GUI prompts, lock screens, and display managers."
+                        };
                         ui.label(
-                            RichText::new(
-                                "Registers /usr/share/pam-configs/linux-hello in /etc/pam.d/common-auth for sudo, Polkit GUI prompts, lock screens, and display managers.",
-                            )
-                            .size(12.5)
-                            .color(Color32::from_gray(170)),
+                            RichText::new(desc)
+                                .size(12.5)
+                                .color(Color32::from_gray(170)),
                         );
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
