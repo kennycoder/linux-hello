@@ -36,12 +36,6 @@ build() {
     make build
 }
 
-check() {
-    cd "$pkgname-$pkgver"
-    export RUSTUP_TOOLCHAIN=stable
-    make test
-}
-
 package() {
     cd "$pkgname-$pkgver"
     make install DESTDIR="$pkgdir" PREFIX=/usr

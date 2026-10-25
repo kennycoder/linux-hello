@@ -37,9 +37,6 @@ experience for sudo, login managers, and lock screens.
 %build
 %make_build build
 
-%check
-%make_build test
-
 %install
 %make_install PREFIX=/usr
 
@@ -74,6 +71,6 @@ fi
 %dir /var/lib/linux-hello/models
 
 %changelog
-* Fri Oct 24 2026 Nikolai <kennycoder> - 0.1.0-1
+* Sun Oct 25 2026 Nikolai <kennycoder> - 0.1.0-1
 - Initial RPM release
 

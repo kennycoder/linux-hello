@@ -28,8 +28,8 @@ check-deps:
 		echo "  Arch Linux:    sudo pacman -S base-devel"; \
 		exit 1; \
 	}
-	@if [ ! -f /usr/include/opencv4/opencv2/opencv.hpp ] && ! (command -v pkg-config >/dev/null 2>&1 && pkg-config --exists opencv4); then \
-		echo "Error: OpenCV 4 development headers not found (/usr/include/opencv4/opencv2/opencv.hpp)."; \
+	@if [ ! -f /usr/include/opencv4/opencv2/opencv.hpp ] && [ ! -f /usr/include/opencv5/opencv2/opencv.hpp ] && [ ! -f /usr/include/opencv/opencv2/opencv.hpp ] && ! (command -v pkg-config >/dev/null 2>&1 && (pkg-config --exists opencv4 || pkg-config --exists opencv5 || pkg-config --exists opencv)); then \
+		echo "Error: OpenCV development headers not found."; \
 		echo "  Debian/Ubuntu: sudo apt install libopencv-dev"; \
 		echo "  RHEL/Fedora:   sudo dnf install opencv-devel"; \
 		echo "  Arch Linux:    sudo pacman -S opencv"; \
