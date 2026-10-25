@@ -1,0 +1,49 @@
+# Maintainer: Nikolai <kennycoder>
+pkgname=linux-hello
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Windows Hello-style face authentication for Linux using OpenCV and PAM"
+arch=('x86_64')
+url="https://github.com/kennycoder/linux-hello"
+license=('GPL-3.0-or-later')
+depends=(
+    'opencv'
+    'pam'
+    'polkit'
+    'hicolor-icon-theme'
+)
+makedepends=(
+    'cargo'
+    'cmake'
+    'extra-cmake-modules'
+    'clang'
+    'pkgconf'
+)
+install=linux-hello.install
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+prepare() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')" 2>/dev/null || cargo fetch --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    export CARGO_TARGET_DIR=target
+    make build
+}
+
+check() {
+    cd "$pkgname-$pkgver"
+    export RUSTUP_TOOLCHAIN=stable
+    make test
+}
+
+package() {
+    cd "$pkgname-$pkgver"
+    make install DESTDIR="$pkgdir" PREFIX=/usr
+}
+

@@ -1,0 +1,39 @@
+post_install() {
+    cat << 'EOF'
+
+==============================================================================
+Linux Hello installation complete!
+
+1. Start and enable the daemon:
+   sudo systemctl enable --now linux-hello.service
+
+2. Enroll your face:
+   sudo linux-hello-cli add   # or launch Linux Hello from your application menu
+
+3. Enable PAM authentication:
+   System-wide: sudo linux-hello enable
+   Sudo-only:   sudo linux-hello enable --sudo-only
+
+Note: On Arch Linux, 'sudo linux-hello enable' modifies /etc/pam.d/system-auth.
+A backup is saved to /etc/pam.d/system-auth.linux-hello.bak.
+==============================================================================
+
+EOF
+}
+
+post_upgrade() {
+    systemctl daemon-reload
+    if systemctl is-active --quiet linux-hello.service; then
+        systemctl restart linux-hello.service
+    fi
+}
+
+pre_remove() {
+    # Disable PAM integration before removing files
+    if [ -x /usr/bin/linux-hello ]; then
+        /usr/bin/linux-hello disable 2>/dev/null || true
+    fi
+    systemctl stop linux-hello.service 2>/dev/null || true
+    systemctl disable linux-hello.service 2>/dev/null || true
+}
+
