@@ -264,6 +264,108 @@ jobs:
           import-from-repo-url: |
             deb-amd64 https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main
 
+      - name: Add Landing Page to GitHub Pages
+        run: |
+          cat << 'EOF' > "${{ steps.apt-repo.outputs.dir }}/index.html"
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>Linux Hello - Official Repository</title>
+            <style>
+              body {
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+                background-color: #0f172a;
+                color: #e2e8f0;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                min-height: 100vh;
+                margin: 0;
+                padding: 20px;
+                box-sizing: border-box;
+              }
+              .card {
+                background: #1e293b;
+                border-radius: 12px;
+                box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+                max-width: 680px;
+                width: 100%;
+                padding: 36px;
+                border: 1px solid #334155;
+              }
+              h1 {
+                margin-top: 0;
+                color: #38bdf8;
+                font-size: 1.8rem;
+                display: flex;
+                align-items: center;
+                gap: 12px;
+              }
+              p {
+                color: #94a3b8;
+                line-height: 1.6;
+              }
+              pre {
+                background: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 8px;
+                padding: 16px;
+                overflow-x: auto;
+                font-size: 0.95rem;
+                color: #f1f5f9;
+                line-height: 1.5;
+              }
+              code {
+                color: #38bdf8;
+                font-family: monospace;
+              }
+              a {
+                color: #38bdf8;
+                text-decoration: none;
+              }
+              a:hover {
+                text-decoration: underline;
+              }
+              .badge {
+                display: inline-block;
+                padding: 4px 10px;
+                background: #0369a1;
+                color: #e0f2fe;
+                font-size: 0.8rem;
+                border-radius: 9999px;
+                font-weight: 600;
+                margin-bottom: 12px;
+              }
+            </style>
+          </head>
+          <body>
+            <div class="card">
+              <span class="badge">APT Repository</span>
+              <h1>Linux Hello</h1>
+              <p>Windows Hello-style facial authentication for Linux desktops using OpenCV and PAM.</p>
+
+              <h3>Debian / Ubuntu Installation</h3>
+              <p>Add this repository to your system to receive automatic updates:</p>
+              <pre><code># 1. Add repository
+          echo "deb [trusted=yes] https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main" | sudo tee /etc/apt/sources.list.d/linux-hello.list
+
+          # 2. Update package list & install
+          sudo apt update
+          sudo apt install linux-hello</code></pre>
+
+              <h3>Arch Linux &amp; Fedora</h3>
+              <p>Precompiled packages (<code>.pkg.tar.zst</code> and <code>.rpm</code>) are available on the <a href="https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/releases">GitHub Releases</a> page.</p>
+
+              <p style="margin-top: 28px; font-size: 0.85rem; color: #64748b;">
+                Source Code &amp; Documentation: <a href="https://github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}">github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}</a>
+              </p>
+            </div>
+          </body>
+          </html>
+          EOF
+
       - name: Upload Pages Artifact
         uses: actions/upload-pages-artifact@v3
         with:

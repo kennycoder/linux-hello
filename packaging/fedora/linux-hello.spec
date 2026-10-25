@@ -66,7 +66,7 @@ fi
 %{_datadir}/icons/hicolor/scalable/apps/linux-hello.svg
 %{_datadir}/polkit-1/actions/org.linuxhello.pkexec.policy
 %{_datadir}/linux-hello/
-/lib/systemd/system/linux-hello.service
+%{_unitdir}/linux-hello.service
 %dir /var/lib/linux-hello
 %dir /var/lib/linux-hello/models
 

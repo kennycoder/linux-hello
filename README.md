@@ -21,79 +21,63 @@ Built in **Rust** with C++ OpenCV DNN acceleration, leveraging dedicated Infrare
 
 ---
 
-## System Installation & PAM Setup
+## Installation
 
-### Option A: Install from Debian Package (.deb) — Debian / Ubuntu
+Precompiled packages are available on [GitHub Releases](https://github.com/kennycoder/linux-hello/releases).
 
-Download the latest `.deb` package from [GitHub Releases](https://github.com/kennycoder/linux-hello/releases) or build it locally with `make deb`:
-
+### Debian / Ubuntu
 ```bash
-# Install package (apt automatically resolves all runtime dependencies, including OpenCV runtime libs)
+# APT repository (auto-updates):
+echo "deb [trusted=yes] https://kennycoder.github.io/linux-hello/ stable main" | sudo tee /etc/apt/sources.list.d/linux-hello.list
+sudo apt update && sudo apt install linux-hello
+
+# Or direct .deb install:
 sudo apt install ./linux-hello_*_amd64.deb
 ```
 
-### Option B: Build and Install from Source (Debian/Ubuntu, RHEL/Fedora, Arch Linux)
-
+### Fedora
 ```bash
-# 1. Install build dependencies for your distro:
-# Debian / Ubuntu:
-sudo apt install build-essential libopencv-dev libpam0g-dev
-# RHEL / Fedora:
-sudo dnf install gcc-c++ make opencv-devel pam-devel
-# Arch Linux:
-sudo pacman -S --needed base-devel opencv pam
-
-# 2. Build and install binaries, PAM module, ONNX models, and systemd service
-make
-sudo make install
-
-# 3. Start and enable the daemon service
-sudo systemctl daemon-reload
-sudo systemctl enable --now linux-hello.service
+sudo dnf install ./linux-hello-*.x86_64.rpm
 ```
 
-### Enabling PAM Authentication
+### Arch Linux
+```bash
+sudo pacman -U ./linux-hello-*-x86_64.pkg.tar.zst
+```
 
-#### 1. System-Wide PAM Setup
-- **Debian / Ubuntu** (via `pam-auth-update`), **Fedora / RHEL** (via `authselect`), and **Arch Linux** (via `/etc/pam.d/system-auth`):
-  ```bash
-  sudo linux-hello enable
-  # Or to disable at any time:
-  sudo linux-hello disable
-  ```
-  - On **Fedora/RHEL**, `sudo linux-hello enable` creates and activates a custom profile (`custom/linux-hello`).
-  - On **Arch Linux**, `sudo linux-hello enable` safely inserts `pam_linux_hello.so` into `/etc/pam.d/system-auth` right before `pam_unix.so` using `[success=2 default=ignore]` (jumping over password prompt and `pam_faillock authfail`), while automatically updating `pam_systemd_home` jump offsets.
-  - On **Debian/Ubuntu**, it registers and runs `pam-auth-update`.
-- **Other Distributions**:
-  Add the following line near the top of `/etc/pam.d/sudo` (or `/etc/pam.d/system-auth` / `/etc/pam.d/system-local-login`):
-  ```text
-  auth    sufficient    pam_linux_hello.so
-  ```
+### Build from Source
+```bash
+make
+sudo make install
+```
 
-#### 2. Sudo-Only Setup (Custom PAM Service + `/etc/sudoers.d/`)
+---
 
-If you only want facial authentication for `sudo` (leaving login, display managers, lock screens, and system-wide `/etc/pam.d/common-auth` untouched, or avoiding conflicts with system-managed PAM files):
+## Quick Start
 
-1. **(Debian / Ubuntu `.deb` users)** If `pam-auth-update` enabled Linux-Hello system-wide, disable the global profile first:
-   ```bash
-   sudo linux-hello disable
-   ```
-   Or configure Sudo-Only mode automatically with a single command (or from the GUI):
-   ```bash
-   sudo linux-hello enable --sudo-only
-   # To remove Sudo-Only mode:
-   sudo linux-hello disable --sudo-only
-   ```
+```bash
+# 1. Start the service
+sudo systemctl enable --now linux-hello.service
 
-2. **Create a custom PAM service (`/etc/pam.d/sudo-hello`)**:
-   Copy your existing `/etc/pam.d/sudo` configuration:
-   ```bash
-   sudo cp /etc/pam.d/sudo /etc/pam.d/sudo-hello
-   ```
-   If your `/etc/pam.d/sudo-hello` delegates to `@include common-auth` (or `@include system-auth`), you can add `pam_linux_hello.so` as `sufficient` at the very top:
-   ```text
-   #%PAM-1.0
-   auth    sufficient    pam_linux_hello.so
+# 2. Enroll your face
+linux-hello-gui   # or: sudo linux-hello-cli add
+
+# 3. Enable PAM authentication
+sudo linux-hello enable              # System-wide (login + sudo)
+# Or: sudo linux-hello enable --sudo-only   # Sudo only
+```
+
+---
+
+## Configuration & PAM Details
+
+### 1. System-Wide vs Sudo-Only Mode
+- **System-Wide (`sudo linux-hello enable`)**:
+  - **Debian / Ubuntu**: Uses `pam-auth-update`
+  - **Fedora / RHEL**: Uses `authselect`
+  - **Arch Linux**: Automatically and safely edits `/etc/pam.d/system-auth`
+- **Sudo-Only (`sudo linux-hello enable --sudo-only`)**:
+  - Restricts facial authentication to `sudo` via `/etc/sudoers.d/`, leaving lockscreen and login untouched.
 
    @include common-auth
    @include common-account

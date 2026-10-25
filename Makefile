@@ -76,7 +76,7 @@ install:
 	install -m 644 debian/org.linuxhello.pkexec.policy $(DESTDIR)$(PREFIX)/share/polkit-1/actions/org.linuxhello.pkexec.policy
 
 	# Install PAM module
-	@if [ -d /usr/lib64/security ]; then \
+	@if [ -d /usr/lib64/security ] && [ ! -L /usr/lib64 ]; then \
 		install -d $(DESTDIR)/usr/lib64/security; \
 		install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)/usr/lib64/security/pam_linux_hello.so; \
 	elif [ -d /lib/x86_64-linux-gnu/security ]; then \
@@ -95,8 +95,8 @@ install:
 	install -d -m 755 $(DESTDIR)/var/lib/linux-hello/models
 
 	# Systemd service
-	install -d $(DESTDIR)/lib/systemd/system
-	install -m 644 debian/linux-hello.service $(DESTDIR)/lib/systemd/system/linux-hello.service
+	install -d $(DESTDIR)$(PREFIX)/lib/systemd/system
+	install -m 644 debian/linux-hello.service $(DESTDIR)$(PREFIX)/lib/systemd/system/linux-hello.service
 
 	# PAM profile configuration
 	@if command -v authselect >/dev/null 2>&1; then \
