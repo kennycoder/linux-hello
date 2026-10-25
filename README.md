@@ -79,6 +79,7 @@ sudo linux-hello enable              # System-wide (login + sudo)
 - **Sudo-Only (`sudo linux-hello enable --sudo-only`)**:
   - Restricts facial authentication to `sudo` via `/etc/sudoers.d/`, leaving lockscreen and login untouched.
 
+   ```text
    @include common-auth
    @include common-account
    @include common-session-noninteractive
@@ -141,7 +142,6 @@ sudo linux-hello enable              # System-wide (login + sudo)
   - `linux-hellod`: Background system daemon keeping models warm in memory for instant sub-100ms verification.
   - `pam_linux_hello.so`: Ultra-lightweight (517 KB) PAM module with zero heavy runtime dependencies in PAM process space.
   - Fail-safe fallback: If camera or daemon is offline, PAM immediately and seamlessly falls back to password authentication without hanging.
-- **Debian PAM Integration**: Uses Debian's standard `pam-auth-update` profile mechanism (`/usr/share/pam-configs/linux-hello`), avoiding fragile manual edits to `/etc/pam.d/common-auth`.
 - **CLI Goodies**: Complete management tool for enrollment, testing, camera diagnostics, offline image analysis, and service control.
 
 ---
@@ -186,24 +186,30 @@ sudo linux-hello enable              # System-wide (login + sudo)
 
 ## Directory Structure
 
-```
+```text
 linux-hello/
 ├── crates/
 │   ├── linux-hello-camera/    # Direct V4L2 ioctl streaming & IR camera discovery
 │   ├── linux-hello-core/      # OpenCV YuNet + SFace C++ bridge & Rust safe API
 │   ├── linux-hellod/          # Background daemon service & Unix socket IPC
-│   ├── pam_linux_hello/       # Thin PAM module (.so) with password fallback
+│   ├── pam_linux_hello/       # Native PAM module (.so) with password fallback
 │   ├── linux-hello-cli/       # CLI utility (linux-hello)
 │   └── linux-hello-gui/       # Standalone GUI application (linux-hello-gui)
+├── kde-kcm/                   # KDE Plasma 6 System Settings Control Module (KCM)
+├── packaging/
+│   ├── arch/                  # Arch Linux PKGBUILD & post-install hooks
+│   └── fedora/                # Fedora / RHEL RPM spec file (linux-hello.spec)
+├── debian/
+│   ├── control, postinst...   # Debian package control & maintainer scripts
+│   ├── linux-hello.service    # Systemd service unit
+│   ├── linux-hello-gui.desktop# Freedesktop application launcher
+│   ├── org.linuxhello.pkexec.policy # Polkit administrative policy
+│   └── pam-config             # pam-auth-update integration profile
 ├── models/
 │   ├── face_detection_yunet.onnx
 │   └── face_recognition_sface.onnx
-├── debian/
-│   ├── linux-hello.service        # Systemd service unit
-│   ├── linux-hello-gui.desktop    # Freedesktop application launcher
-│   ├── org.linuxhello.pkexec.policy # Polkit policy for GUI administrative actions
-│   └── pam-config                 # pam-auth-update integration profile
-├── Makefile                   # Build and system installation rules
+├── assets/                    # Logos, icons, and UI screenshots
+├── Makefile                   # Build, test, and multi-distro installation rules
 └── README.md
 ```
 
