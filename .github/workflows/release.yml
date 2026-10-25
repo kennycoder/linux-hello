@@ -110,13 +110,15 @@ jobs:
       - name: Prepare RPM build tree and source tarball
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           rpmdev-setuptree
           # Update version in spec file
           sed -i "s/^Version:.*/Version:        ${VERSION}/" packaging/fedora/linux-hello.spec
           cp packaging/fedora/linux-hello.spec ~/rpmbuild/SPECS/
-          # Create source tarball
-          git archive --format=tar.gz --prefix=linux-hello-${VERSION}/ -o ~/rpmbuild/SOURCES/linux-hello-${VERSION}.tar.gz HEAD
+          # Create source tarball from workspace directory directly
+          tar --exclude="./target*" \
+              --exclude="./.git*" \
+              --transform "s,^\.,linux-hello-${VERSION}," \
+              -czf ~/rpmbuild/SOURCES/linux-hello-${VERSION}.tar.gz .
 
       - name: Build RPM package
         run: |
@@ -184,7 +186,11 @@ jobs:
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
           # Create source tarball for makepkg from checked out source
-          su builder -c "git archive --format=tar.gz --prefix=linux-hello-${VERSION}/ -o packaging/arch/linux-hello-${VERSION}.tar.gz HEAD"
+          tar --exclude="./target*" \
+              --exclude="./.git*" \
+              --transform "s,^\.,linux-hello-${VERSION}," \
+              -czf packaging/arch/linux-hello-${VERSION}.tar.gz .
+          chown builder:builder packaging/arch/linux-hello-${VERSION}.tar.gz
           cd packaging/arch
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
           sed -i "s|source=(.*)|source=(\"linux-hello-${VERSION}.tar.gz\")|" PKGBUILD
