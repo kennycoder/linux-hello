@@ -47,6 +47,8 @@ fn main() {
 
     builder.compile("face_engine");
 
+    println!("cargo:rustc-link-lib=static=face_engine");
+
     // OpenCV libraries to link.
     // If pkg-config successfully resolved the library, it already emitted the exact
     // cargo:rustc-link-lib and cargo:rustc-link-search directives for all installed modules.

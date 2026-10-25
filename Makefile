@@ -86,6 +86,12 @@ install:
 	@if [ -d /usr/lib64/security ]; then \
 		install -d $(DESTDIR)/usr/lib64/security; \
 		install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)/usr/lib64/security/pam_linux_hello.so; \
+	elif [ -d /lib/x86_64-linux-gnu/security ]; then \
+		install -d $(DESTDIR)/lib/x86_64-linux-gnu/security; \
+		install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)/lib/x86_64-linux-gnu/security/pam_linux_hello.so; \
+	else \
+		install -d $(DESTDIR)$(PREFIX)/lib/security; \
+		install -m 644 target/release/libpam_linux_hello.so $(DESTDIR)$(PREFIX)/lib/security/pam_linux_hello.so; \
 	fi
 
 	# Install ONNX models
