@@ -117,8 +117,10 @@ jobs:
           # Create source tarball from workspace directory directly
           tar --exclude="./target*" \
               --exclude="./.git*" \
+              --exclude="*.tar.gz" \
               --transform "s,^\.,linux-hello-${VERSION}," \
-              -czf ~/rpmbuild/SOURCES/linux-hello-${VERSION}.tar.gz .
+              -czf /tmp/linux-hello-${VERSION}.tar.gz .
+          mv /tmp/linux-hello-${VERSION}.tar.gz ~/rpmbuild/SOURCES/
 
       - name: Build RPM package
         run: |
@@ -185,11 +187,13 @@ jobs:
       - name: Build package with makepkg
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
-          # Create source tarball for makepkg from checked out source
+          # Create source tarball for makepkg in /tmp to prevent tar from reading its own output
           tar --exclude="./target*" \
               --exclude="./.git*" \
+              --exclude="*.tar.gz" \
               --transform "s,^\.,linux-hello-${VERSION}," \
-              -czf packaging/arch/linux-hello-${VERSION}.tar.gz .
+              -czf /tmp/linux-hello-${VERSION}.tar.gz .
+          mv /tmp/linux-hello-${VERSION}.tar.gz packaging/arch/linux-hello-${VERSION}.tar.gz
           chown builder:builder packaging/arch/linux-hello-${VERSION}.tar.gz
           cd packaging/arch
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
