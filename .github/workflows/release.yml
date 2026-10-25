@@ -89,6 +89,7 @@ jobs:
       - name: Install build dependencies
         run: |
           dnf install -y \
+            git \
             rpm-build \
             rpmdevtools \
             rust \
@@ -109,6 +110,7 @@ jobs:
       - name: Prepare RPM build tree and source tarball
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           rpmdev-setuptree
           # Update version in spec file
           sed -i "s/^Version:.*/Version:        ${VERSION}/" packaging/fedora/linux-hello.spec
@@ -176,14 +178,16 @@ jobs:
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "git config --global --add safe.directory '$GITHUB_WORKSPACE'"
 
       - name: Build package with makepkg
         run: |
           VERSION="${{ steps.vars.outputs.version }}"
+          # Create source tarball for makepkg from checked out source
+          su builder -c "git archive --format=tar.gz --prefix=linux-hello-${VERSION}/ -o packaging/arch/linux-hello-${VERSION}.tar.gz HEAD"
           cd packaging/arch
-          # Update version and make source point to current checkout
           sed -i "s/^pkgver=.*/pkgver=${VERSION}/" PKGBUILD
-          # Package using local source directory
+          sed -i "s|source=(.*)|source=(\"linux-hello-${VERSION}.tar.gz\")|" PKGBUILD
           su builder -c "
             export CARGO_HOME=/home/builder/.cargo
             makepkg -sf --noconfirm --nodeps
