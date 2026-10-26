@@ -380,6 +380,9 @@ jobs:
 
       - name: Add Landing Page to GitHub Pages
         run: |
+          if [ -f "${{ steps.apt-repo.outputs.dir }}/linux-hello.asc" ]; then
+            gpg --dearmor < "${{ steps.apt-repo.outputs.dir }}/linux-hello.asc" > "${{ steps.apt-repo.outputs.dir }}/linux-hello.gpg"
+          fi
           cat << 'EOF' > "${{ steps.apt-repo.outputs.dir }}/index.html"
           <!DOCTYPE html>
           <html lang="en">
@@ -462,10 +465,13 @@ jobs:
 
               <h3>Debian / Ubuntu Installation</h3>
               <p>Add this repository to your system to receive automatic updates:</p>
-              <pre><code># 1. Add repository
-          echo "deb [trusted=yes] https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main" | sudo tee /etc/apt/sources.list.d/linux-hello.list
+              <pre><code># 1. Install repository signing key
+          curl -fsSL https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/linux-hello.gpg | sudo tee /usr/share/keyrings/linux-hello.gpg &gt;/dev/null
 
-          # 2. Update package list & install
+          # 2. Add repository
+          echo "deb [arch=amd64 signed-by=/usr/share/keyrings/linux-hello.gpg] https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main" | sudo tee /etc/apt/sources.list.d/linux-hello.list
+
+          # 3. Update package list &amp; install
           sudo apt update
           sudo apt install linux-hello</code></pre>
 

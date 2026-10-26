@@ -28,7 +28,8 @@ Precompiled packages are available on [GitHub Releases](https://github.com/kenny
 ### Debian / Ubuntu
 ```bash
 # APT repository (auto-updates):
-echo "deb [trusted=yes] https://kennycoder.github.io/linux-hello/ stable main" | sudo tee /etc/apt/sources.list.d/linux-hello.list
+curl -fsSL https://kennycoder.github.io/linux-hello/linux-hello.gpg | sudo tee /usr/share/keyrings/linux-hello.gpg >/dev/null
+echo "deb [arch=amd64 signed-by=/usr/share/keyrings/linux-hello.gpg] https://kennycoder.github.io/linux-hello/ stable main" | sudo tee /etc/apt/sources.list.d/linux-hello.list
 sudo apt update && sudo apt install linux-hello
 
 # Or direct .deb install:
