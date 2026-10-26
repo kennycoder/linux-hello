@@ -4,7 +4,7 @@ Section: admin
 Priority: optional
 Architecture: amd64
 Maintainer: Nikolai <kennycoder@users.noreply.github.com>
-Depends: libc6 (>= 2.34), libstdc++6 (>= 11), libopencv-core4.5d | libopencv-core406t64 | libopencv-core410 | libopencv-dev, libopencv-dnn4.5d | libopencv-dnn406t64 | libopencv-dnn410 | libopencv-dev, libopencv-objdetect4.5d | libopencv-objdetect406t64 | libopencv-objdetect410 | libopencv-dev, libpam-runtime
+Depends: libc6 (>= 2.34), libstdc++6 (>= 11), libopencv-core4.5d | libopencv-core406 | libopencv-core406t64 | libopencv-core410 | libopencv-dev, libopencv-dnn4.5d | libopencv-dnn406 | libopencv-dnn406t64 | libopencv-dnn410 | libopencv-dev, libopencv-objdetect4.5d | libopencv-objdetect406 | libopencv-objdetect406t64 | libopencv-objdetect410 | libopencv-dev, libopencv-imgproc4.5d | libopencv-imgproc406 | libopencv-imgproc406t64 | libopencv-imgproc410 | libopencv-dev, libpam-runtime
 Suggests: systemsettings, qml6-module-org-kde-kirigamiaddons-formcard
 Homepage: https://github.com/kennycoder/linux-hello
 Description: Fast biometric facial authentication for Linux via dedicated IR camera

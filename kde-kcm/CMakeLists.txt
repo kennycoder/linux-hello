@@ -12,6 +12,7 @@ execute_process(
     COMMAND qtpaths6 --plugin-dir
     OUTPUT_VARIABLE QT6_PLUGIN_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
 )
 if(QT6_PLUGIN_DIR)
     file(RELATIVE_PATH REL_PLUGIN_DIR "${CMAKE_INSTALL_PREFIX}" "${QT6_PLUGIN_DIR}")
@@ -21,6 +22,7 @@ if(QT6_PLUGIN_DIR)
     endif()
 endif()
 
+set(QT_MAJOR_VERSION 6)
 include(KDEInstallDirs)
 include(KDECMakeSettings)
 

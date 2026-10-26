@@ -6,6 +6,7 @@ pkgdesc="Windows Hello-style face authentication for Linux using OpenCV and PAM"
 arch=('x86_64')
 url="https://github.com/kennycoder/linux-hello"
 license=('GPL-3.0-or-later')
+options=('!debug')
 depends=(
     'opencv'
     'pam'
@@ -16,8 +17,17 @@ makedepends=(
     'cargo'
     'cmake'
     'extra-cmake-modules'
+    'qt6-base'
+    'qt6-declarative'
+    'kcoreaddons'
+    'kcmutils'
+    'ki18n'
     'clang'
     'pkgconf'
+)
+optdepends=(
+    'systemsettings: KDE Plasma System Settings integration'
+    'kirigami-addons: KDE Plasma Control Module UI components'
 )
 install=linux-hello.install
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
@@ -34,7 +44,7 @@ build() {
     export RUSTUP_TOOLCHAIN=stable
     export CARGO_TARGET_DIR=target
     unset RUSTFLAGS LDFLAGS CFLAGS CXXFLAGS
-    make build
+    make build REQUIRE_KCM=1
 }
 
 package() {
