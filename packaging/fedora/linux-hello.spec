@@ -1,3 +1,5 @@
+%global debug_package %{nil}
+
 Name:           linux-hello
 Version:        0.1.0
 Release:        1%{?dist}
@@ -18,13 +20,20 @@ BuildRequires:  polkit-devel
 BuildRequires:  clang-devel
 BuildRequires:  cmake
 BuildRequires:  extra-cmake-modules
+BuildRequires:  qt6-qtbase-devel
+BuildRequires:  qt6-qtdeclarative-devel
 BuildRequires:  kf6-kcoreaddons-devel
+BuildRequires:  kf6-kcmutils-devel
+BuildRequires:  kf6-ki18n-devel
+BuildRequires:  gettext
 
 Requires:       opencv
 Requires:       pam
 Requires:       authselect
 Requires:       polkit
 Requires:       hicolor-icon-theme
+Recommends:     kf6-kirigami-addons
+Suggests:       plasma-systemsettings
 
 %description
 Linux Hello brings facial recognition authentication to Linux desktops using
@@ -35,7 +44,7 @@ experience for sudo, login managers, and lock screens.
 %autosetup -n %{name}-%{version}
 
 %build
-%make_build build
+%make_build build REQUIRE_KCM=1
 
 %install
 %make_install PREFIX=/usr
@@ -62,7 +71,9 @@ fi
 %{_bindir}/linux-hellod
 %{_bindir}/linux-hello-gui
 %{_libdir}/security/pam_linux_hello.so
+%{_libdir}/qt6/plugins/plasma/kcms/systemsettings/kcm_linuxhello.so
 %{_datadir}/applications/linux-hello-gui.desktop
+%{_datadir}/applications/kcm_linuxhello.desktop
 %{_datadir}/icons/hicolor/scalable/apps/linux-hello.svg
 %{_datadir}/polkit-1/actions/org.linuxhello.pkexec.policy
 %{_datadir}/linux-hello/

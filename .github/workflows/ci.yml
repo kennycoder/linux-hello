@@ -7,22 +7,36 @@ on:
     branches: [ "main" ]
 
 jobs:
-  build-and-test:
-    name: Build & Test
+  build-and-test-modern:
+    name: Build & Test (Debian 13 / Ubuntu 26.04 + KDE KCM)
     runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Install system dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
             build-essential \
+            pkg-config \
             libopencv-dev \
             libpam0g-dev \
-            clang
+            clang \
+            cmake \
+            extra-cmake-modules \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libkf6coreaddons-dev \
+            libkf6kcmutils-dev \
+            libkf6i18n-dev \
+            gettext
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -33,6 +47,41 @@ jobs:
       - name: Run Tests
         run: make test
 
-      - name: Build Debian Package
-        run: make deb
+      - name: Build Debian Package (Debian 13 / Ubuntu 26.04)
+        run: make deb REQUIRE_KCM=1
+
+  build-and-test-lts:
+    name: Build & Test (Debian 12 / Ubuntu 24.04 LTS)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libopencv-dev \
+            libpam0g-dev \
+            clang
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Tests
+        run: make test
+
+      - name: Build Debian Package (Debian 12 / Ubuntu 24.04 LTS)
+        run: make deb DEB_SUFFIX=_debian12-ubuntu24.04
 

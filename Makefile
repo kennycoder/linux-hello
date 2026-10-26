@@ -39,11 +39,25 @@ check-deps:
 build-kcm:
 	@if command -v cmake >/dev/null 2>&1; then \
 		echo "Configuring and building KDE Control Module (kcm_linuxhello)..."; \
-		if cmake -B kde-kcm/build -S kde-kcm -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(PREFIX) 2>/dev/null; then \
-			cmake --build kde-kcm/build || { echo "Warning: KDE KCM build failed."; }; \
+		if cmake -B kde-kcm/build -S kde-kcm -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(PREFIX) -DKDE_INSTALL_USE_QT_SYS_PATHS=ON >/dev/null 2>&1; then \
+			cmake --build kde-kcm/build || { \
+				echo "Warning: KDE KCM build failed."; \
+				if [ "$(REQUIRE_KCM)" = "1" ]; then exit 1; fi; \
+			}; \
 		else \
+			rm -rf kde-kcm/build; \
 			echo "KDE build dependencies (ECM / KF6 / Qt6) not fully present; skipping KCM build."; \
+			echo "  Debian/Ubuntu: sudo apt install cmake extra-cmake-modules qt6-base-dev qt6-declarative-dev libkf6coreaddons-dev libkf6kcmutils-dev libkf6i18n-dev"; \
+			echo "  RHEL/Fedora:   sudo dnf install cmake extra-cmake-modules qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kcoreaddons-devel kf6-kcmutils-devel kf6-ki18n-devel"; \
+			echo "  Arch Linux:    sudo pacman -S --needed cmake extra-cmake-modules qt6-base qt6-declarative kcoreaddons kcmutils ki18n"; \
+			if [ "$(REQUIRE_KCM)" = "1" ]; then \
+				cmake -B kde-kcm/build -S kde-kcm -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=$(PREFIX) -DKDE_INSTALL_USE_QT_SYS_PATHS=ON; \
+				exit 1; \
+			fi; \
 		fi \
+	elif [ "$(REQUIRE_KCM)" = "1" ]; then \
+		echo "Error: cmake not found (required for KDE KCM build)."; \
+		exit 1; \
 	fi
 
 build: check-deps build-kcm
@@ -123,17 +137,20 @@ install:
 
 VERSION ?= 0.1.0
 ARCH ?= amd64
-DEB_BUILD_DIR = target/debian/linux-hello_$(VERSION)_$(ARCH)
+DEB_SUFFIX ?=
+DEB_PKG_NAME = linux-hello_$(VERSION)$(DEB_SUFFIX)_$(ARCH)
+DEB_BUILD_DIR = target/debian/$(DEB_PKG_NAME)
 
 deb: build
 	rm -rf target/debian
 	mkdir -p $(DEB_BUILD_DIR)/DEBIAN
 	cp debian/control debian/postinst debian/prerm debian/postrm $(DEB_BUILD_DIR)/DEBIAN/
+	sed -i "s/^Version:.*/Version: $(VERSION)/" $(DEB_BUILD_DIR)/DEBIAN/control
 	chmod 755 $(DEB_BUILD_DIR)/DEBIAN
 	chmod 755 $(DEB_BUILD_DIR)/DEBIAN/postinst $(DEB_BUILD_DIR)/DEBIAN/prerm $(DEB_BUILD_DIR)/DEBIAN/postrm
 	$(MAKE) install DESTDIR=$(DEB_BUILD_DIR) PREFIX=/usr
-	dpkg-deb --build --root-owner-group $(DEB_BUILD_DIR) target/linux-hello_$(VERSION)_$(ARCH).deb
-	@echo "\n✓ Successfully built package: target/linux-hello_$(VERSION)_$(ARCH).deb"
+	dpkg-deb --build --root-owner-group $(DEB_BUILD_DIR) target/$(DEB_PKG_NAME).deb
+	@echo "\n✓ Successfully built package: target/$(DEB_PKG_NAME).deb"
 
 uninstall:
 	rm -f $(DESTDIR)$(PREFIX)/bin/linux-hello

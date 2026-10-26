@@ -13,12 +13,35 @@ permissions:
 
 jobs:
   build-deb:
-    name: Build Debian Package
+    name: Build Debian 13 & Ubuntu 26.04 (.deb + KCM)
     runs-on: ubuntu-latest
+    container:
+      image: debian:trixie
     outputs:
       version: ${{ steps.vars.outputs.version }}
 
     steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libopencv-dev \
+            libpam0g-dev \
+            clang \
+            cmake \
+            extra-cmake-modules \
+            qt6-base-dev \
+            qt6-declarative-dev \
+            libkf6coreaddons-dev \
+            libkf6kcmutils-dev \
+            libkf6i18n-dev \
+            gettext
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -32,15 +55,6 @@ jobs:
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            libopencv-dev \
-            libpam0g-dev \
-            clang
-
       - name: Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
@@ -50,8 +64,8 @@ jobs:
       - name: Run Tests
         run: make test
 
-      - name: Build Debian Package
-        run: make deb VERSION="${{ steps.vars.outputs.version }}"
+      - name: Build Debian Package (Debian 13 / Ubuntu 26.04)
+        run: make deb VERSION="${{ steps.vars.outputs.version }}" REQUIRE_KCM=1
 
       - name: Generate Checksums
         run: |
@@ -65,6 +79,64 @@ jobs:
           path: |
             target/linux-hello_${{ steps.vars.outputs.version }}_amd64.deb
             target/linux-hello_${{ steps.vars.outputs.version }}_amd64.deb.sha256
+
+  build-deb-lts:
+    name: Build Debian 12 & Ubuntu 24.04 LTS (.deb)
+    runs-on: ubuntu-latest
+    container:
+      image: debian:bookworm
+
+    steps:
+      - name: Install system dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            git \
+            build-essential \
+            pkg-config \
+            libopencv-dev \
+            libpam0g-dev \
+            clang
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Extract Tag Version
+        id: vars
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.1.0"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run Tests
+        run: make test
+
+      - name: Build Debian Package (Debian 12 / Ubuntu 24.04 LTS)
+        run: make deb VERSION="${{ steps.vars.outputs.version }}" DEB_SUFFIX=_debian12-ubuntu24.04
+
+      - name: Generate Checksums
+        run: |
+          cd target
+          sha256sum linux-hello_${{ steps.vars.outputs.version }}_debian12-ubuntu24.04_amd64.deb > linux-hello_${{ steps.vars.outputs.version }}_debian12-ubuntu24.04_amd64.deb.sha256
+
+      - name: Upload Debian LTS Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: debian-lts-packages
+          path: |
+            target/linux-hello_${{ steps.vars.outputs.version }}_debian12-ubuntu24.04_amd64.deb
+            target/linux-hello_${{ steps.vars.outputs.version }}_debian12-ubuntu24.04_amd64.deb.sha256
 
   build-rpm:
     name: Build Fedora RPM
@@ -103,7 +175,12 @@ jobs:
             clang-devel \
             cmake \
             extra-cmake-modules \
+            qt6-qtbase-devel \
+            qt6-qtdeclarative-devel \
             kf6-kcoreaddons-devel \
+            kf6-kcmutils-devel \
+            kf6-ki18n-devel \
+            gettext \
             tar \
             gzip
 
@@ -116,6 +193,7 @@ jobs:
           cp packaging/fedora/linux-hello.spec ~/rpmbuild/SPECS/
           # Create source tarball from workspace directory directly
           tar --exclude="./target*" \
+              --exclude="./kde-kcm/build*" \
               --exclude="./.git*" \
               --exclude="*.tar.gz" \
               --transform "s,^\.,linux-hello-${VERSION}," \
@@ -129,7 +207,7 @@ jobs:
       - name: Copy RPM and generate checksum
         run: |
           mkdir -p target-rpm
-          find ~/rpmbuild/RPMS -type f -name "*.rpm" -exec cp {} target-rpm/ \;
+          find ~/rpmbuild/RPMS -type f -name "*.rpm" ! -name "*-debuginfo-*" ! -name "*-debugsource-*" -exec cp {} target-rpm/ \;
           cd target-rpm
           for f in *.rpm; do
             sha256sum "$f" > "$f.sha256"
@@ -174,6 +252,11 @@ jobs:
             hicolor-icon-theme \
             cmake \
             extra-cmake-modules \
+            qt6-base \
+            qt6-declarative \
+            kcoreaddons \
+            kcmutils \
+            ki18n \
             clang \
             pkgconf \
             git
@@ -189,6 +272,7 @@ jobs:
           VERSION="${{ steps.vars.outputs.version }}"
           # Create source tarball for makepkg in /tmp to prevent tar from reading its own output
           tar --exclude="./target*" \
+              --exclude="./kde-kcm/build*" \
               --exclude="./.git*" \
               --exclude="*.tar.gz" \
               --transform "s,^\.,linux-hello-${VERSION}," \
@@ -206,7 +290,7 @@ jobs:
       - name: Copy Arch packages and generate checksum
         run: |
           mkdir -p target-arch
-          find packaging/arch -type f -name "*.pkg.tar.*" -exec cp {} target-arch/ \;
+          find packaging/arch -type f -name "*.pkg.tar.*" ! -name "*-debug-*" -exec cp {} target-arch/ \;
           cd target-arch
           for f in *.pkg.tar.*; do
             sha256sum "$f" > "$f.sha256"
@@ -221,7 +305,7 @@ jobs:
   publish-release:
     name: Publish Release & Deploy APT Repo
     runs-on: ubuntu-latest
-    needs: [build-deb, build-rpm, build-arch]
+    needs: [build-deb, build-deb-lts, build-rpm, build-arch]
 
     steps:
       - name: Download all built packages

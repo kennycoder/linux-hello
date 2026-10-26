@@ -219,6 +219,8 @@ linux-hello/
 
 When building from source, `linux-hello-core` compiles a C++17 bridge against **OpenCV 4** (`opencv_core`, `opencv_dnn`, `opencv_objdetect`, `opencv_imgproc`) to accelerate YuNet (`cv::FaceDetectorYN`) and SFace (`cv::FaceRecognizerSF`) ONNX inference.
 
+### Core Build Dependencies
+
 Install the required system dependencies for your distribution:
 
 - **Debian / Ubuntu**:
@@ -235,7 +237,28 @@ Install the required system dependencies for your distribution:
   sudo pacman -S --needed base-devel opencv pam
   ```
 
-You also need a **Rust toolchain** (Rust 1.85+ for the 2024 edition, via [rustup.rs](https://rustup.rs/) or your system package manager). Verify all build prerequisites at any time with:
+### KDE Plasma 6 Control Module (`kcm_linuxhello`) Dependencies (Optional)
+
+To build the native KDE Plasma 6 System Settings module (`kde-kcm`), install the **CMake**, **ECM**, **Qt 6** (`Core`, `Quick`, `Network`), and **KDE Frameworks 6** (`CoreAddons`, `KCMUtils`, `I18n`) development packages (along with the runtime Kirigami FormCard QML module):
+
+- **Debian (13+) / Ubuntu (24.10+ / 26.04+)**:
+  ```bash
+  sudo apt install cmake extra-cmake-modules qt6-base-dev qt6-declarative-dev libkf6coreaddons-dev libkf6kcmutils-dev libkf6i18n-dev qml6-module-org-kde-kirigamiaddons-formcard
+  ```
+- **Fedora / RHEL**:
+  ```bash
+  sudo dnf install cmake extra-cmake-modules qt6-qtbase-devel qt6-qtdeclarative-devel kf6-kcoreaddons-devel kf6-kcmutils-devel kf6-ki18n-devel kf6-kirigami-addons
+  ```
+- **Arch Linux**:
+  ```bash
+  sudo pacman -S --needed cmake extra-cmake-modules qt6-base qt6-declarative kcoreaddons kcmutils ki18n kirigami-addons
+  ```
+
+*(If these packages are not installed, `make` will print `"KDE build dependencies (ECM / KF6 / Qt6) not fully present; skipping KCM build."` and continue building the core daemon, CLI, standalone GUI, and PAM module.)*
+
+### Rust Toolchain
+
+You also need a **Rust toolchain** (Rust 1.85+ for the 2024 edition, via [rustup.rs](https://rustup.rs/) or your system package manager). Verify core build prerequisites at any time with:
 
 ```bash
 make check-deps
