@@ -96,6 +96,29 @@ sudo linux-hello enable              # System-wide (login + sudo)
    Defaults pam_service="sudo-hello"
    ```
 
+### 2. Polkit & Desktop Privilege Elevation (KDE Plasma / GNOME)
+
+When desktop environments display a Polkit authorization dialog for administrative tasks (e.g., updating biometric profiles or toggling PAM settings in `linux-hello-gui`), Polkit queries the administrative group (`sudo` on Debian/Ubuntu, `wheel` on Fedora/Arch/RHEL).
+
+If your user account is not a member of that group:
+- The dialog will prompt: **`Authenticating as root (root)`**.
+- Linux-Hello checks for a `root` biometric profile (`/var/lib/linux-hello/models/root.json`). Because only your individual user is enrolled, face authentication fails immediately and falls back to prompting for the root password.
+
+**Solution**: Add your user to the administrative group so Polkit prompts for your user account:
+
+- **Debian / Ubuntu**:
+  ```bash
+  su - -c "usermod -aG sudo $USER"
+  # or if sudo is active: sudo usermod -aG sudo $USER
+  ```
+- **Fedora / Arch Linux**:
+  ```bash
+  sudo usermod -aG wheel $USER
+  ```
+
+> [!IMPORTANT]
+> **Log out and log back in** (or restart your session) after adding your user to the group so the new group membership applies to your graphical desktop session. Once re-logged in, Polkit will prompt: *Authenticating as &lt;User&gt;*, and Linux-Hello will immediately recognize your face.
+
 ---
 
 ## Verification & Safe Testing
