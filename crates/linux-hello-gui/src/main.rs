@@ -22,25 +22,159 @@ use system::{
 };
 use worker::{CameraWorker, FramePacket, WorkerEvent};
 
-// KDE Plasma Breeze Dark Color Palette (BreezeDark.colors)
-const BREEZE_WINDOW_BG: Color32 = Color32::from_rgb(42, 46, 50); // #2a2e32 Window BackgroundNormal
-const BREEZE_HEADER_BG: Color32 = Color32::from_rgb(35, 38, 41); // #232629 Header / Card surface
-const BREEZE_VIEW_BG: Color32 = Color32::from_rgb(27, 30, 32); // #1b1e20 View BackgroundNormal
-const BREEZE_BUTTON_BG: Color32 = Color32::from_rgb(49, 54, 59); // #31363b Button BackgroundNormal
-const BREEZE_BUTTON_HOVER: Color32 = Color32::from_rgb(62, 68, 74); // #3e444a Button Hover
-const BREEZE_BORDER: Color32 = Color32::from_rgb(68, 74, 80); // #444a50 Subtle Frame / Separator
-const BREEZE_TEXT: Color32 = Color32::from_rgb(252, 252, 252); // #fcfcfc ForegroundNormal
-const BREEZE_TEXT_MUTED: Color32 = Color32::from_rgb(161, 169, 177); // #a1a9b1 ForegroundInactive
-const BREEZE_ACCENT: Color32 = Color32::from_rgb(61, 174, 233); // #3daee9 Highlight / Focus Blue
-const BREEZE_ACCENT_BTN: Color32 = Color32::from_rgb(41, 128, 185); // #2980b9 Primary Action Button Fill
-const BREEZE_ACCENT_DARK: Color32 = Color32::from_rgb(28, 78, 110); // #1c4e6e Active Selection Fill
-const BREEZE_POSITIVE: Color32 = Color32::from_rgb(39, 174, 96); // #27ae60 ForegroundPositive
-const BREEZE_POSITIVE_BG: Color32 = Color32::from_rgb(23, 56, 36); // #173824 Positive Banner/Badge Fill
-const BREEZE_POSITIVE_FG: Color32 = Color32::from_rgb(163, 230, 189); // Positive Banner Text
-const BREEZE_WARNING: Color32 = Color32::from_rgb(246, 116, 0); // #f67400 ForegroundNeutral
-const BREEZE_NEGATIVE: Color32 = Color32::from_rgb(218, 68, 83); // #da4453 ForegroundNegative
-const BREEZE_NEGATIVE_BG: Color32 = Color32::from_rgb(68, 24, 30); // #44181e Negative Banner/Button Fill
-const BREEZE_NEGATIVE_FG: Color32 = Color32::from_rgb(250, 185, 192); // Negative Banner Text
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct BreezePalette {
+    is_dark: bool,
+    window_bg: Color32,
+    header_bg: Color32,
+    view_bg: Color32,
+    button_bg: Color32,
+    button_hover: Color32,
+    border: Color32,
+    text: Color32,
+    text_muted: Color32,
+    accent: Color32,
+    accent_btn: Color32,
+    accent_selection: Color32,
+    positive: Color32,
+    positive_bg: Color32,
+    positive_fg: Color32,
+    warning: Color32,
+    negative: Color32,
+    negative_bg: Color32,
+    negative_fg: Color32,
+}
+
+impl BreezePalette {
+    // KDE Plasma Breeze Dark Color Palette (BreezeDark.colors)
+    const fn dark() -> Self {
+        Self {
+            is_dark: true,
+            window_bg: Color32::from_rgb(42, 46, 50),        // #2a2e32 Window BackgroundNormal
+            header_bg: Color32::from_rgb(35, 38, 41),        // #232629 Header / Card surface
+            view_bg: Color32::from_rgb(27, 30, 32),          // #1b1e20 View BackgroundNormal
+            button_bg: Color32::from_rgb(49, 54, 59),        // #31363b Button BackgroundNormal
+            button_hover: Color32::from_rgb(62, 68, 74),     // #3e444a Button Hover
+            border: Color32::from_rgb(68, 74, 80),           // #444a50 Subtle Frame / Separator
+            text: Color32::from_rgb(252, 252, 252),          // #fcfcfc ForegroundNormal
+            text_muted: Color32::from_rgb(161, 169, 177),    // #a1a9b1 ForegroundInactive
+            accent: Color32::from_rgb(61, 174, 233),         // #3daee9 Highlight / Focus Blue
+            accent_btn: Color32::from_rgb(41, 128, 185),     // #2980b9 Primary Action Button Fill
+            accent_selection: Color32::from_rgb(28, 78, 110),// #1c4e6e Active Selection Fill
+            positive: Color32::from_rgb(39, 174, 96),        // #27ae60 ForegroundPositive
+            positive_bg: Color32::from_rgb(23, 56, 36),      // #173824 Positive Banner/Badge Fill
+            positive_fg: Color32::from_rgb(163, 230, 189),   // Positive Banner Text
+            warning: Color32::from_rgb(246, 116, 0),         // #f67400 ForegroundNeutral
+            negative: Color32::from_rgb(218, 68, 83),        // #da4453 ForegroundNegative
+            negative_bg: Color32::from_rgb(68, 24, 30),      // #44181e Negative Banner/Button Fill
+            negative_fg: Color32::from_rgb(250, 185, 192),   // Negative Banner Text
+        }
+    }
+
+    // KDE Plasma Breeze Light Color Palette (BreezeLight.colors)
+    const fn light() -> Self {
+        Self {
+            is_dark: false,
+            window_bg: Color32::from_rgb(239, 240, 241),     // #eff0f1 Window BackgroundNormal
+            header_bg: Color32::from_rgb(247, 248, 249),     // #f7f8f9 Header / Card surface
+            view_bg: Color32::from_rgb(255, 255, 255),       // #ffffff View BackgroundNormal
+            button_bg: Color32::from_rgb(252, 252, 252),     // #fcfcfc Button BackgroundNormal
+            button_hover: Color32::from_rgb(227, 238, 248),  // #e3eef8 Button Hover
+            border: Color32::from_rgb(189, 195, 199),        // #bdc3c7 Subtle Frame / Separator
+            text: Color32::from_rgb(35, 38, 41),             // #232629 ForegroundNormal
+            text_muted: Color32::from_rgb(112, 125, 138),    // #707d8a ForegroundInactive
+            accent: Color32::from_rgb(29, 128, 181),         // #1d80b5 Highlight / Focus Blue (readable on light)
+            accent_btn: Color32::from_rgb(41, 128, 185),     // #2980b9 Primary Action Button Fill
+            accent_selection: Color32::from_rgb(203, 232, 249), // #cbe8f9 Active Selection Fill
+            positive: Color32::from_rgb(30, 142, 74),        // #1e8e4a ForegroundPositive
+            positive_bg: Color32::from_rgb(219, 245, 228),   // Positive Banner/Badge Fill
+            positive_fg: Color32::from_rgb(21, 97, 51),      // Positive Banner Text
+            warning: Color32::from_rgb(204, 92, 0),          // #cc5c00 ForegroundNeutral
+            negative: Color32::from_rgb(218, 68, 83),        // #da4453 ForegroundNegative
+            negative_bg: Color32::from_rgb(253, 226, 228),   // Negative Banner/Button Fill
+            negative_fg: Color32::from_rgb(158, 28, 42),     // Negative Banner Text
+        }
+    }
+
+    const fn for_theme(is_dark: bool) -> Self {
+        if is_dark {
+            Self::dark()
+        } else {
+            Self::light()
+        }
+    }
+}
+
+fn parse_kdeglobals_is_dark(content: &str) -> Option<bool> {
+    let mut in_window_colors = false;
+    let mut scheme_hint: Option<bool> = None;
+
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        if line.starts_with('[') && line.ends_with(']') {
+            in_window_colors = line.eq_ignore_ascii_case("[Colors:Window]");
+            continue;
+        }
+        if let Some((k, v)) = line.split_once('=') {
+            let key = k.trim();
+            let val = v.trim();
+            if in_window_colors && key.eq_ignore_ascii_case("BackgroundNormal") {
+                let parts: Vec<u16> = val
+                    .split(',')
+                    .filter_map(|s| s.trim().parse::<u16>().ok())
+                    .collect();
+                if parts.len() >= 3 {
+                    let avg_luma = (parts[0] + parts[1] + parts[2]) / 3;
+                    return Some(avg_luma < 128);
+                }
+            } else if key.eq_ignore_ascii_case("ColorScheme") {
+                let lower = val.to_ascii_lowercase();
+                if lower.contains("dark") {
+                    scheme_hint = Some(true);
+                } else if lower.contains("light") || lower == "breeze" {
+                    scheme_hint = Some(false);
+                }
+            }
+        }
+    }
+    scheme_hint
+}
+
+fn detect_system_dark_mode(ctx: &egui::Context) -> bool {
+    let mut candidates = Vec::new();
+    if let Ok(cfg) = std::env::var("XDG_CONFIG_HOME") {
+        candidates.push(PathBuf::from(cfg).join("kdeglobals"));
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        candidates.push(PathBuf::from(home).join(".config/kdeglobals"));
+    }
+    if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+        if !sudo_user.is_empty() {
+            candidates.push(
+                PathBuf::from("/home")
+                    .join(sudo_user)
+                    .join(".config/kdeglobals"),
+            );
+        }
+    }
+
+    for path in candidates {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Some(is_dark) = parse_kdeglobals_is_dark(&content) {
+                return is_dark;
+            }
+        }
+    }
+
+    if let Some(theme) = ctx.input(|i| i.raw.system_theme) {
+        return theme == egui::Theme::Dark;
+    }
+
+    true
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ActiveTab {
@@ -156,11 +290,17 @@ struct LinuxHelloGuiApp {
 
     // Notification banner
     banner: Option<StatusBanner>,
+
+    // Dynamic KDE Breeze Dark / Light palette
+    palette: BreezePalette,
+    last_theme_check: Instant,
 }
 
 impl LinuxHelloGuiApp {
     fn new(cc: &eframe::CreationContext<'_>, capture_poses_dir: Option<PathBuf>) -> Self {
-        configure_visuals(&cc.egui_ctx);
+        let is_dark = detect_system_dark_mode(&cc.egui_ctx);
+        let palette = BreezePalette::for_theme(is_dark);
+        configure_visuals(&cc.egui_ctx, &palette);
 
         let username = get_current_username();
         let models_dir = resolve_models_dir();
@@ -213,6 +353,8 @@ impl LinuxHelloGuiApp {
             capture_pose_idx: 0,
             last_capture_time: Instant::now() - Duration::from_secs(5),
             banner: None,
+            palette,
+            last_theme_check: Instant::now(),
         };
 
         app.reload_profile();
@@ -572,8 +714,8 @@ impl LinuxHelloGuiApp {
         let (rect, _) = ui.allocate_exact_size(desired_size, Sense::hover());
         let painter = ui.painter_at(rect);
 
-        // Dark background
-        painter.rect_filled(rect, CornerRadius::same(12), BREEZE_VIEW_BG);
+        // Dark camera well background
+        painter.rect_filled(rect, CornerRadius::same(12), Color32::from_rgb(27, 30, 32));
 
         if let Some(ref tex) = self.camera_texture {
             painter.image(
@@ -588,7 +730,7 @@ impl LinuxHelloGuiApp {
                 Align2::CENTER_CENTER,
                 "IR Camera Idle",
                 FontId::proportional(18.0),
-                BREEZE_TEXT_MUTED,
+                Color32::from_rgb(161, 169, 177),
             );
         }
 
@@ -617,11 +759,11 @@ impl LinuxHelloGuiApp {
                     );
 
                     let box_color = if !face.eyes_visible {
-                        BREEZE_NEGATIVE // Red: eyes occluded
+                        self.palette.negative // Red: eyes occluded
                     } else if face.is_valid_human_face() {
-                        BREEZE_POSITIVE // Green: valid human face
+                        self.palette.positive // Green: valid human face
                     } else {
-                        BREEZE_WARNING // Amber/Orange
+                        self.palette.warning // Amber/Orange
                     };
 
                     painter.rect_stroke(
@@ -640,8 +782,8 @@ impl LinuxHelloGuiApp {
                         };
                         let pt = Pos2::new(rect.left() + mx * scale_x, rect.top() + ly * scale_y);
                         let lm_color = match idx {
-                            0 | 1 => BREEZE_ACCENT,                    // Eyes: Breeze Blue
-                            2 => BREEZE_WARNING,                       // Nose: Breeze Neutral Amber
+                            0 | 1 => self.palette.accent,                    // Eyes: Breeze Blue
+                            2 => self.palette.warning,                       // Nose: Breeze Neutral Amber
                             _ => Color32::from_rgb(167, 139, 250),     // Mouth: Purple
                         };
                         painter.circle_filled(pt, 3.5, lm_color);
@@ -666,7 +808,7 @@ impl LinuxHelloGuiApp {
                 Align2::CENTER_CENTER,
                 format!("Direction: {}", pose_name),
                 FontId::proportional(13.5),
-                BREEZE_ACCENT,
+                self.palette.accent,
             );
         }
 
@@ -675,8 +817,8 @@ impl LinuxHelloGuiApp {
             let center = rect.center();
             let radius = rect.height().min(rect.width()) * 0.36;
 
-            let color_done = BREEZE_POSITIVE;
-            let color_active = BREEZE_ACCENT;
+            let color_done = self.palette.positive;
+            let color_active = self.palette.accent;
             let color_pending = Color32::from_rgba_unmultiplied(161, 169, 177, 90);
 
             // Base subtle guide circle
@@ -756,7 +898,7 @@ impl LinuxHelloGuiApp {
                     let dot_x = center.x + (i as f32 - 1.0) * 18.0;
                     let filled = i < self.stable_hold_frames;
                     let dot_col = if filled {
-                        BREEZE_POSITIVE
+                        self.palette.positive
                     } else {
                         Color32::from_gray(90)
                     };
@@ -769,7 +911,7 @@ impl LinuxHelloGuiApp {
         painter.rect_stroke(
             rect,
             CornerRadius::same(12),
-            Stroke::new(1.5_f32, BREEZE_BORDER),
+            Stroke::new(1.5_f32, self.palette.border),
             StrokeKind::Inside,
         );
     }
@@ -785,7 +927,7 @@ impl LinuxHelloGuiApp {
                 ui.add_space(8.0);
                 // Live Guidance Banner
                 egui::Frame::group(ui.style())
-                    .fill(BREEZE_HEADER_BG)
+                    .fill(self.palette.header_bg)
                     .corner_radius(CornerRadius::same(6))
                     .inner_margin(10.0)
                     .show(ui, |ui| {
@@ -793,7 +935,7 @@ impl LinuxHelloGuiApp {
                             RichText::new(&self.enroll_guidance)
                                 .size(14.5)
                                 .strong()
-                                .color(BREEZE_TEXT),
+                                .color(self.palette.text),
                         );
                     });
 
@@ -810,7 +952,7 @@ impl LinuxHelloGuiApp {
                 ui.add_space(4.0);
                 ui.label(
                     RichText::new(format!("Target User: {}", self.username))
-                        .color(BREEZE_TEXT_MUTED),
+                        .color(self.palette.text_muted),
                 );
                 ui.add_space(10.0);
 
@@ -846,11 +988,11 @@ impl LinuxHelloGuiApp {
                                 let is_done = self.pose_completed[idx];
                                 let is_current = self.is_enrolling && self.current_pose_idx == idx;
                                 let (icon, col) = if is_done {
-                                    ("✓", BREEZE_POSITIVE)
+                                    ("✓", self.palette.positive)
                                 } else if is_current {
-                                    ("▶", BREEZE_ACCENT)
+                                    ("▶", self.palette.accent)
                                 } else {
-                                    ("○", BREEZE_TEXT_MUTED)
+                                    ("○", self.palette.text_muted)
                                 };
                                 ui.horizontal(|ui| {
                                     ui.label(RichText::new(icon).color(col).strong());
@@ -858,7 +1000,7 @@ impl LinuxHelloGuiApp {
                                     ui.label(
                                         RichText::new(format!("— {}", step.prompt))
                                             .size(12.5)
-                                            .color(BREEZE_TEXT_MUTED),
+                                            .color(self.palette.text_muted),
                                     );
                                 });
                                 ui.add_space(3.0);
@@ -875,7 +1017,7 @@ impl LinuxHelloGuiApp {
                                     "Add an extra appearance template (e.g. 'glasses', 'hat').",
                                 )
                                 .size(12.5)
-                                .color(BREEZE_TEXT_MUTED),
+                                .color(self.palette.text_muted),
                             );
                             ui.add_space(6.0);
                             ui.text_edit_singleline(&mut self.custom_pose_label);
@@ -890,9 +1032,12 @@ impl LinuxHelloGuiApp {
                             .add_sized(
                                 [180.0, 36.0],
                                 egui::Button::new(
-                                    RichText::new("▶ Start Enrollment").size(15.0).strong(),
+                                    RichText::new("▶ Start Enrollment")
+                                        .size(15.0)
+                                        .strong()
+                                        .color(Color32::WHITE),
                                 )
-                                .fill(BREEZE_ACCENT_BTN),
+                                .fill(self.palette.accent_btn),
                             )
                             .clicked()
                         {
@@ -916,9 +1061,12 @@ impl LinuxHelloGuiApp {
                         .add_sized(
                             [180.0, 36.0],
                             egui::Button::new(
-                                RichText::new("■ Cancel Enrollment").size(15.0).strong(),
+                                RichText::new("■ Cancel Enrollment")
+                                    .size(15.0)
+                                    .strong()
+                                    .color(Color32::WHITE),
                             )
-                            .fill(BREEZE_NEGATIVE),
+                            .fill(self.palette.negative),
                         )
                         .clicked()
                     {
@@ -939,7 +1087,7 @@ impl LinuxHelloGuiApp {
                                 let (yaw, pitch) = face.estimated_pose_ratios();
                                 let (_, pose_name) = face.classify_pose(self.center_baseline);
                                 ui.colored_label(
-                                    BREEZE_ACCENT,
+                                    self.palette.accent,
                                     RichText::new(format!("Detected Direction: {}", pose_name))
                                         .strong(),
                                 );
@@ -978,7 +1126,7 @@ impl LinuxHelloGuiApp {
                 "Storage Path: {:?}",
                 self.storage_dir.join(format!("{}.json", self.username))
             ))
-            .color(BREEZE_TEXT_MUTED),
+            .color(self.palette.text_muted),
         );
         ui.add_space(12.0);
 
@@ -1025,14 +1173,14 @@ impl LinuxHelloGuiApp {
                     for step in &FIVE_POSES {
                         let present = profile.labels.iter().any(|l| l == step.id);
                         let bg = if present {
-                            BREEZE_POSITIVE_BG
+                            self.palette.positive_bg
                         } else {
-                            BREEZE_BUTTON_BG
+                            self.palette.button_bg
                         };
                         let fg = if present {
-                            BREEZE_POSITIVE_FG
+                            self.palette.positive_fg
                         } else {
-                            BREEZE_TEXT_MUTED
+                            self.palette.text_muted
                         };
                         egui::Frame::NONE
                             .fill(bg)
@@ -1074,13 +1222,13 @@ impl LinuxHelloGuiApp {
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new(format!("#{}", idx + 1))
-                                        .color(BREEZE_TEXT_MUTED),
+                                        .color(self.palette.text_muted),
                                 );
                                 ui.label(RichText::new(friendly_pose_name(lbl)).strong().size(14.0));
                                 ui.label(
                                     RichText::new(format!("[id: '{}', {}-D SFace vector]", lbl, dim))
                                         .size(12.0)
-                                        .color(BREEZE_TEXT_MUTED),
+                                        .color(self.palette.text_muted),
                                 );
                                 ui.with_layout(
                                     egui::Layout::right_to_left(egui::Align::Center),
@@ -1121,9 +1269,9 @@ impl LinuxHelloGuiApp {
                 .add(
                     egui::Button::new(
                         RichText::new("🗑 Delete Entire Biometric Profile")
-                            .color(BREEZE_NEGATIVE_FG),
+                            .color(self.palette.negative_fg),
                     )
-                    .fill(BREEZE_NEGATIVE_BG),
+                    .fill(self.palette.negative_bg),
                 )
                 .clicked()
             {
@@ -1131,7 +1279,7 @@ impl LinuxHelloGuiApp {
             }
         } else {
             egui::Frame::group(ui.style())
-                .fill(BREEZE_NEGATIVE_BG)
+                .fill(self.palette.negative_bg)
                 .corner_radius(CornerRadius::same(6))
                 .inner_margin(10.0)
                 .show(ui, |ui| {
@@ -1142,12 +1290,16 @@ impl LinuxHelloGuiApp {
                                 self.username
                             ))
                             .strong()
-                            .color(BREEZE_NEGATIVE_FG),
+                            .color(self.palette.negative_fg),
                         );
                         if ui
                             .add(
-                                egui::Button::new(RichText::new("Yes, Delete All").strong())
-                                    .fill(BREEZE_NEGATIVE),
+                                egui::Button::new(
+                                    RichText::new("Yes, Delete All")
+                                        .strong()
+                                        .color(Color32::WHITE),
+                                )
+                                .fill(self.palette.negative),
                             )
                             .clicked()
                         {
@@ -1188,9 +1340,11 @@ impl LinuxHelloGuiApp {
                             .add_sized(
                                 [170.0, 34.0],
                                 egui::Button::new(
-                                    RichText::new("▶ Start Live Stream").strong(),
+                                    RichText::new("▶ Start Live Stream")
+                                        .strong()
+                                        .color(Color32::WHITE),
                                 )
-                                .fill(BREEZE_ACCENT_BTN),
+                                .fill(self.palette.accent_btn),
                             )
                             .clicked()
                         {
@@ -1203,8 +1357,12 @@ impl LinuxHelloGuiApp {
                     } else if ui
                         .add_sized(
                             [170.0, 34.0],
-                            egui::Button::new(RichText::new("■ Stop Live Stream").strong())
-                                .fill(BREEZE_NEGATIVE),
+                            egui::Button::new(
+                                RichText::new("■ Stop Live Stream")
+                                    .strong()
+                                    .color(Color32::WHITE),
+                            )
+                            .fill(self.palette.negative),
                         )
                         .clicked()
                     {
@@ -1273,7 +1431,7 @@ impl LinuxHelloGuiApp {
 
                             if !face.eyes_visible {
                                 ui.colored_label(
-                                    BREEZE_NEGATIVE,
+                                    self.palette.negative,
                                     RichText::new("⛔ REJECTED: Eyes Covered or Occluded")
                                         .size(15.0)
                                         .strong(),
@@ -1282,9 +1440,9 @@ impl LinuxHelloGuiApp {
                                 let match_res = verify_face(face, prof, self.test_threshold);
                                 let score = match_res.best_score.max(0.0);
                                 let verdict_col = if match_res.matched && valid_geom {
-                                    BREEZE_POSITIVE
+                                    self.palette.positive
                                 } else {
-                                    BREEZE_NEGATIVE
+                                    self.palette.negative
                                 };
                                 let verdict_text = if match_res.matched && valid_geom {
                                     format!(
@@ -1324,9 +1482,9 @@ impl LinuxHelloGuiApp {
                                     let lbl =
                                         prof.labels.get(idx).map(|s| s.as_str()).unwrap_or("?");
                                     let bar_col = if sim >= self.test_threshold {
-                                        BREEZE_POSITIVE
+                                        self.palette.positive
                                     } else {
-                                        BREEZE_ACCENT_BTN
+                                        self.palette.accent_btn
                                     };
                                     ui.horizontal(|ui| {
                                         ui.set_min_width(110.0);
@@ -1344,7 +1502,7 @@ impl LinuxHelloGuiApp {
                                         "Face detected — Direction: {} (No enrolled profile to compare against).",
                                         live_pose_name
                                     ))
-                                    .color(BREEZE_WARNING),
+                                    .color(self.palette.warning),
                                 );
                             }
 
@@ -1352,7 +1510,7 @@ impl LinuxHelloGuiApp {
                             ui.separator();
                             ui.label(RichText::new("Anatomical & Pose Telemetry").strong());
                             ui.colored_label(
-                                BREEZE_ACCENT,
+                                self.palette.accent,
                                 RichText::new(format!(
                                     "Detected Head Direction: {} (yaw = {:.2}, pitch = {:.2})",
                                     live_pose_name, yaw, pitch
@@ -1382,7 +1540,7 @@ impl LinuxHelloGuiApp {
                                     pkt.fps, pkt.inference_ms, pkt.mean_brightness
                                 ))
                                 .size(12.5)
-                                .color(BREEZE_TEXT_MUTED),
+                                .color(self.palette.text_muted),
                             );
                         }
                     });
@@ -1440,9 +1598,9 @@ impl LinuxHelloGuiApp {
                                     .strong(),
                             );
                             let (badge_txt, badge_col) = if enabled {
-                                ("● ENABLED", BREEZE_POSITIVE)
+                                ("● ENABLED", self.palette.positive)
                             } else {
-                                ("○ DISABLED", BREEZE_TEXT_MUTED)
+                                ("○ DISABLED", self.palette.text_muted)
                             };
                             ui.colored_label(badge_col, RichText::new(badge_txt).strong());
                         });
@@ -1452,7 +1610,7 @@ impl LinuxHelloGuiApp {
                                 "Uses a dedicated /etc/pam.d/sudo-hello service and /etc/sudoers.d/ drop-in so only 'sudo' uses face auth, leaving login/lock screens and /etc/pam.d/common-auth untouched.",
                             )
                             .size(12.5)
-                            .color(BREEZE_TEXT_MUTED),
+                            .color(self.palette.text_muted),
                         );
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
@@ -1460,9 +1618,11 @@ impl LinuxHelloGuiApp {
                                 if ui
                                     .add(
                                         egui::Button::new(
-                                            RichText::new("Enable Sudo-Only PAM (Polkit)").strong(),
+                                            RichText::new("Enable Sudo-Only PAM (Polkit)")
+                                                .strong()
+                                                .color(Color32::WHITE),
                                         )
-                                        .fill(BREEZE_ACCENT_BTN),
+                                        .fill(self.palette.accent_btn),
                                     )
                                     .clicked()
                                 {
@@ -1507,9 +1667,9 @@ impl LinuxHelloGuiApp {
                                     .strong(),
                             );
                             let (badge_txt, badge_col) = if enabled {
-                                ("● ENABLED", BREEZE_POSITIVE)
+                                ("● ENABLED", self.palette.positive)
                             } else {
-                                ("○ DISABLED", BREEZE_TEXT_MUTED)
+                                ("○ DISABLED", self.palette.text_muted)
                             };
                             ui.colored_label(badge_col, RichText::new(badge_txt).strong());
                         });
@@ -1524,7 +1684,7 @@ impl LinuxHelloGuiApp {
                         ui.label(
                             RichText::new(desc)
                                 .size(12.5)
-                                .color(BREEZE_TEXT_MUTED),
+                                .color(self.palette.text_muted),
                         );
                         ui.add_space(10.0);
                         ui.horizontal(|ui| {
@@ -1567,9 +1727,9 @@ impl LinuxHelloGuiApp {
                                     .strong(),
                             );
                             let (txt, col) = if self.daemon_status.daemon_reachable {
-                                ("● ONLINE", BREEZE_POSITIVE)
+                                ("● ONLINE", self.palette.positive)
                             } else {
-                                ("○ OFFLINE", BREEZE_WARNING)
+                                ("○ OFFLINE", self.palette.warning)
                             };
                             ui.colored_label(col, RichText::new(txt).strong());
                         });
@@ -1658,7 +1818,7 @@ impl LinuxHelloGuiApp {
                                         self.selected_camera = Some(cam.path.clone());
                                     }
                                     ui.colored_label(
-                                        BREEZE_POSITIVE,
+                                        self.palette.positive,
                                         RichText::new("[IR CAMERA]").strong(),
                                     );
                                     ui.label(
@@ -1668,7 +1828,7 @@ impl LinuxHelloGuiApp {
                                             cam.formats.join(", ")
                                         ))
                                         .size(12.5)
-                                        .color(BREEZE_TEXT_MUTED),
+                                        .color(self.palette.text_muted),
                                     );
                                 });
                             }
@@ -1707,12 +1867,12 @@ impl LinuxHelloGuiApp {
                         step.title.to_uppercase()
                     ))
                     .size(22.0)
-                    .color(BREEZE_ACCENT),
+                    .color(self.palette.accent),
                 );
                 ui.add_space(8.0);
 
                 egui::Frame::group(ui.style())
-                    .fill(BREEZE_HEADER_BG)
+                    .fill(self.palette.header_bg)
                     .corner_radius(CornerRadius::same(6))
                     .inner_margin(14.0)
                     .show(ui, |ui| {
@@ -1720,7 +1880,7 @@ impl LinuxHelloGuiApp {
                             RichText::new(step.prompt)
                                 .size(17.0)
                                 .strong()
-                                .color(BREEZE_TEXT),
+                                .color(self.palette.text),
                         );
                         ui.add_space(6.0);
                         ui.label(
@@ -1728,7 +1888,7 @@ impl LinuxHelloGuiApp {
                                 "Position your head in this direction and press SPACE (or click the button below) to capture the frame.",
                             )
                             .size(13.5)
-                            .color(BREEZE_TEXT_MUTED),
+                            .color(self.palette.text_muted),
                         );
                     });
 
@@ -1741,11 +1901,11 @@ impl LinuxHelloGuiApp {
                             let done = i < idx;
                             let current = i == idx;
                             let (icon, col) = if done {
-                                ("✓", BREEZE_POSITIVE)
+                                ("✓", self.palette.positive)
                             } else if current {
-                                ("▶", BREEZE_ACCENT)
+                                ("▶", self.palette.accent)
                             } else {
-                                ("○", BREEZE_TEXT_MUTED)
+                                ("○", self.palette.text_muted)
                             };
                             ui.horizontal(|ui| {
                                 ui.label(RichText::new(icon).color(col).strong());
@@ -1753,7 +1913,7 @@ impl LinuxHelloGuiApp {
                                 ui.label(
                                     RichText::new(format!("— {}", p.prompt))
                                         .size(12.5)
-                                        .color(BREEZE_TEXT_MUTED),
+                                        .color(self.palette.text_muted),
                                 );
                             });
                         }
@@ -1770,9 +1930,10 @@ impl LinuxHelloGuiApp {
                                 step.title
                             ))
                             .size(16.0)
-                            .strong(),
+                            .strong()
+                            .color(Color32::WHITE),
                         )
-                        .fill(BREEZE_ACCENT_BTN),
+                        .fill(self.palette.accent_btn),
                     )
                     .clicked()
                 {
@@ -1790,7 +1951,7 @@ impl LinuxHelloGuiApp {
                     } else {
                         ui.label(
                             RichText::new("⚠ No face currently detected in frame — adjust position before capturing")
-                                .color(BREEZE_WARNING),
+                                .color(self.palette.warning),
                         );
                     }
                 }
@@ -1850,6 +2011,15 @@ impl LinuxHelloGuiApp {
 
 impl eframe::App for LinuxHelloGuiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.last_theme_check.elapsed() > Duration::from_secs(2) {
+            self.last_theme_check = Instant::now();
+            let is_dark = detect_system_dark_mode(ctx);
+            if is_dark != self.palette.is_dark {
+                self.palette = BreezePalette::for_theme(is_dark);
+                configure_visuals(ctx, &self.palette);
+            }
+        }
+
         self.poll_worker(ctx);
 
         if let Some(out_dir) = self.capture_poses_dir.clone() {
@@ -1872,7 +2042,7 @@ impl eframe::App for LinuxHelloGuiApp {
         egui::TopBottomPanel::top("top_header")
             .frame(
                 egui::Frame::side_top_panel(&ctx.style())
-                    .fill(BREEZE_HEADER_BG)
+                    .fill(self.palette.header_bg)
                     .inner_margin(egui::Margin::symmetric(16, 10)),
             )
             .show(ctx, |ui| {
@@ -1881,12 +2051,12 @@ impl eframe::App for LinuxHelloGuiApp {
                         RichText::new("Linux-Hello")
                             .size(20.0)
                             .strong()
-                            .color(BREEZE_ACCENT),
+                            .color(self.palette.accent),
                     );
                     ui.label(
                         RichText::new("Biometric Facial Authentication")
                             .size(13.5)
-                            .color(BREEZE_TEXT_MUTED),
+                            .color(self.palette.text_muted),
                     );
 
                     ui.add_space(16.0);
@@ -1924,7 +2094,7 @@ impl eframe::App for LinuxHelloGuiApp {
                         ui.label(
                             RichText::new(format!("User: {}", self.username))
                                 .size(13.0)
-                                .color(BREEZE_TEXT_MUTED),
+                                .color(self.palette.text_muted),
                         );
                     });
                 });
@@ -1934,14 +2104,14 @@ impl eframe::App for LinuxHelloGuiApp {
                     if banner.created_at.elapsed() < Duration::from_secs(8) {
                         ui.add_space(6.0);
                         let bg = if banner.is_error {
-                            BREEZE_NEGATIVE_BG
+                            self.palette.negative_bg
                         } else {
-                            BREEZE_POSITIVE_BG
+                            self.palette.positive_bg
                         };
                         let fg = if banner.is_error {
-                            BREEZE_NEGATIVE_FG
+                            self.palette.negative_fg
                         } else {
-                            BREEZE_POSITIVE_FG
+                            self.palette.positive_fg
                         };
                         egui::Frame::NONE
                             .fill(bg)
@@ -1981,49 +2151,58 @@ impl eframe::App for LinuxHelloGuiApp {
     }
 }
 
-fn configure_visuals(ctx: &egui::Context) {
-    let mut visuals = egui::Visuals::dark();
+fn configure_visuals(ctx: &egui::Context, palette: &BreezePalette) {
+    let mut visuals = if palette.is_dark {
+        egui::Visuals::dark()
+    } else {
+        egui::Visuals::light()
+    };
     visuals.window_corner_radius = CornerRadius::same(6);
-    visuals.panel_fill = BREEZE_WINDOW_BG;
-    visuals.window_fill = BREEZE_WINDOW_BG;
-    visuals.extreme_bg_color = BREEZE_VIEW_BG;
-    visuals.faint_bg_color = BREEZE_HEADER_BG;
-    visuals.override_text_color = Some(BREEZE_TEXT);
-    visuals.hyperlink_color = BREEZE_ACCENT;
-    visuals.warn_fg_color = BREEZE_WARNING;
-    visuals.error_fg_color = BREEZE_NEGATIVE;
+    visuals.panel_fill = palette.window_bg;
+    visuals.window_fill = palette.window_bg;
+    visuals.extreme_bg_color = palette.view_bg;
+    visuals.faint_bg_color = palette.header_bg;
+    visuals.override_text_color = Some(palette.text);
+    visuals.hyperlink_color = palette.accent;
+    visuals.warn_fg_color = palette.warning;
+    visuals.error_fg_color = palette.negative;
 
-    visuals.selection.bg_fill = BREEZE_ACCENT_DARK;
-    visuals.selection.stroke = Stroke::new(1.0, BREEZE_ACCENT);
+    visuals.selection.bg_fill = palette.accent_selection;
+    visuals.selection.stroke = Stroke::new(1.0, palette.accent);
 
-    visuals.widgets.noninteractive.bg_fill = BREEZE_HEADER_BG;
-    visuals.widgets.noninteractive.weak_bg_fill = BREEZE_HEADER_BG;
-    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BREEZE_BORDER);
-    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, BREEZE_TEXT);
+    visuals.widgets.noninteractive.bg_fill = palette.header_bg;
+    visuals.widgets.noninteractive.weak_bg_fill = palette.header_bg;
+    visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, palette.border);
+    visuals.widgets.noninteractive.fg_stroke = Stroke::new(1.0, palette.text);
     visuals.widgets.noninteractive.corner_radius = CornerRadius::same(6);
 
-    visuals.widgets.inactive.bg_fill = BREEZE_BUTTON_BG;
-    visuals.widgets.inactive.weak_bg_fill = BREEZE_BUTTON_BG;
-    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, BREEZE_BORDER);
-    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, BREEZE_TEXT);
+    visuals.widgets.inactive.bg_fill = palette.button_bg;
+    visuals.widgets.inactive.weak_bg_fill = palette.button_bg;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(1.0, palette.border);
+    visuals.widgets.inactive.fg_stroke = Stroke::new(1.0, palette.text);
     visuals.widgets.inactive.corner_radius = CornerRadius::same(5);
 
-    visuals.widgets.hovered.bg_fill = BREEZE_BUTTON_HOVER;
-    visuals.widgets.hovered.weak_bg_fill = BREEZE_BUTTON_HOVER;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, BREEZE_ACCENT);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    let hover_fg = if palette.is_dark {
+        Color32::WHITE
+    } else {
+        palette.text
+    };
+    visuals.widgets.hovered.bg_fill = palette.button_hover;
+    visuals.widgets.hovered.weak_bg_fill = palette.button_hover;
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, palette.accent);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, hover_fg);
     visuals.widgets.hovered.corner_radius = CornerRadius::same(5);
 
-    visuals.widgets.active.bg_fill = BREEZE_ACCENT_DARK;
-    visuals.widgets.active.weak_bg_fill = BREEZE_ACCENT_DARK;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, BREEZE_ACCENT);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, Color32::WHITE);
+    visuals.widgets.active.bg_fill = palette.accent_selection;
+    visuals.widgets.active.weak_bg_fill = palette.accent_selection;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, palette.accent);
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, hover_fg);
     visuals.widgets.active.corner_radius = CornerRadius::same(5);
 
-    visuals.widgets.open.bg_fill = BREEZE_BUTTON_HOVER;
-    visuals.widgets.open.weak_bg_fill = BREEZE_BUTTON_HOVER;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, BREEZE_ACCENT);
-    visuals.widgets.open.fg_stroke = Stroke::new(1.0, BREEZE_TEXT);
+    visuals.widgets.open.bg_fill = palette.button_hover;
+    visuals.widgets.open.weak_bg_fill = palette.button_hover;
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, palette.accent);
+    visuals.widgets.open.fg_stroke = Stroke::new(1.0, palette.text);
     visuals.widgets.open.corner_radius = CornerRadius::same(5);
 
     ctx.set_visuals(visuals);
