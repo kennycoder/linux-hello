@@ -352,6 +352,7 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.build-deb.outputs.version }}
           files: dist/*
           generate_release_notes: true
           draft: false
@@ -378,10 +379,17 @@ jobs:
           import-from-repo-url: |
             deb-amd64 https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/ stable main
 
-      - name: Add Landing Page to GitHub Pages
+      - name: Add Landing Page & GPG Key to GitHub Pages
+        env:
+          GPG_SIGNING_KEY: ${{ secrets.GPG_SIGNING_KEY }}
         run: |
-          if [ -f "${{ steps.apt-repo.outputs.dir }}/linux-hello.asc" ]; then
-            gpg --dearmor < "${{ steps.apt-repo.outputs.dir }}/linux-hello.asc" > "${{ steps.apt-repo.outputs.dir }}/linux-hello.gpg"
+          if [ -n "$GPG_SIGNING_KEY" ]; then
+            GNUPGHOME="$(mktemp -d)"
+            export GNUPGHOME
+            echo "$GPG_SIGNING_KEY" | gpg --batch --import
+            gpg --batch --export --armor > "${{ steps.apt-repo.outputs.dir }}/linux-hello.asc"
+            gpg --batch --export > "${{ steps.apt-repo.outputs.dir }}/linux-hello.gpg"
+            rm -rf "$GNUPGHOME"
           fi
           cat << 'EOF' > "${{ steps.apt-repo.outputs.dir }}/index.html"
           <!DOCTYPE html>
