@@ -135,7 +135,8 @@ install:
 		DESTDIR=$(DESTDIR) cmake --install kde-kcm/build; \
 	fi
 
-VERSION ?= 0.1.0
+GIT_VERSION := $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//')
+VERSION ?= $(if $(GIT_VERSION),$(GIT_VERSION),0.1.0)
 ARCH ?= amd64
 DEB_SUFFIX ?=
 DEB_PKG_NAME = linux-hello_$(VERSION)$(DEB_SUFFIX)_$(ARCH)

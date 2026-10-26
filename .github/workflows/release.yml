@@ -11,6 +11,10 @@ permissions:
   pages: write
   id-token: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build-deb:
     name: Build Debian 13 & Ubuntu 26.04 (.deb + KCM)
@@ -44,15 +48,22 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract Tag Version
         id: vars
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.1.0"
-          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              VERSION="${GITHUB_REF_NAME#v}"
+              ;;
+            *)
+              TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+              VERSION="${TAG#v}"
+              ;;
+          esac
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust toolchain
@@ -65,20 +76,20 @@ jobs:
         run: make test
 
       - name: Build Debian Package (Debian 13 / Ubuntu 26.04)
-        run: make deb VERSION="${{ steps.vars.outputs.version }}" REQUIRE_KCM=1
+        run: make deb VERSION="${{ steps.vars.outputs.version }}" REQUIRE_KCM=1 DEB_SUFFIX=_debian13-ubuntu26.04
 
       - name: Generate Checksums
         run: |
           cd target
-          sha256sum linux-hello_${{ steps.vars.outputs.version }}_amd64.deb > linux-hello_${{ steps.vars.outputs.version }}_amd64.deb.sha256
+          sha256sum linux-hello_${{ steps.vars.outputs.version }}_debian13-ubuntu26.04_amd64.deb > linux-hello_${{ steps.vars.outputs.version }}_debian13-ubuntu26.04_amd64.deb.sha256
 
       - name: Upload Debian Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: debian-packages
           path: |
-            target/linux-hello_${{ steps.vars.outputs.version }}_amd64.deb
-            target/linux-hello_${{ steps.vars.outputs.version }}_amd64.deb.sha256
+            target/linux-hello_${{ steps.vars.outputs.version }}_debian13-ubuntu26.04_amd64.deb
+            target/linux-hello_${{ steps.vars.outputs.version }}_debian13-ubuntu26.04_amd64.deb.sha256
 
   build-deb-lts:
     name: Build Debian 12 & Ubuntu 24.04 LTS (.deb)
@@ -102,15 +113,22 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract Tag Version
         id: vars
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.1.0"
-          fi
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              VERSION="${GITHUB_REF_NAME#v}"
+              ;;
+            *)
+              TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+              VERSION="${TAG#v}"
+              ;;
+          esac
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Set up Rust toolchain
@@ -147,15 +165,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract Tag Version
         id: vars
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.1.0"
-          fi
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              VERSION="${GITHUB_REF_NAME#v}"
+              ;;
+            *)
+              TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+              VERSION="${TAG#v}"
+              ;;
+          esac
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Install build dependencies
@@ -228,15 +252,21 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Extract Tag Version
         id: vars
         run: |
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            VERSION="${GITHUB_REF_NAME#v}"
-          else
-            VERSION="0.1.0"
-          fi
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              VERSION="${GITHUB_REF_NAME#v}"
+              ;;
+            *)
+              TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.1.0")
+              VERSION="${TAG#v}"
+              ;;
+          esac
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Arch environment and build dependencies
